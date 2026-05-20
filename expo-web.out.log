@@ -1,0 +1,7 @@
+
+> withart-app@1.0.8 web
+> expo start --web --port 19006 --non-interactive
+
+env: load .env
+env: export EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+Starting project at C:\Users\USER\Desktop\wallspaceapp\wallspace-app
