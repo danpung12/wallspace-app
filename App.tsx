@@ -111,7 +111,9 @@ const RESERVATION_PATH_PREFIXES = [
 ];
 
 function isReservationPath(pathname: string): boolean {
-  return RESERVATION_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  return RESERVATION_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}?`),
+  );
 }
 
 const FULLSCREEN_WEB_OVERLAY_SCRIPT = `(function(){

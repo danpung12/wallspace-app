@@ -267,7 +267,11 @@ function getPathnameForTab(tab?: string): string | null {
 
 function getOwnerNameForPath(pathname?: string): string {
   const path = pathname || '/';
-  if (RESERVATION_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return 'map';
+  if (
+    RESERVATION_PATH_PREFIXES.some(
+      (prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`),
+    )
+  ) return 'map';
   if (path.startsWith('/map')) return 'map';
   if (path.startsWith('/dashboard')) return 'dashboard';
   if (path.startsWith('/profile')) return 'profile';
