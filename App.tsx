@@ -100,6 +100,20 @@ const TAB_WEBVIEW_TARGETS = [
   { name: 'profile', path: '/profile' },
 ] as const;
 
+const RESERVATION_PATH_PREFIXES = [
+  '/bookingdate',
+  '/bookingdate2',
+  '/confirm-booking',
+  '/booking',
+  '/payment/success',
+  '/bookingdetail',
+  '/refund',
+];
+
+function isReservationPath(pathname: string): boolean {
+  return RESERVATION_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 const FULLSCREEN_WEB_OVERLAY_SCRIPT = `(function(){
   try {
     document.documentElement.style.setProperty('--safe-area-top', '0px');
@@ -1330,7 +1344,7 @@ export default function App({ onLoggedInChange }: AppProps) {
       ? '대시보드'
       : pathname.startsWith('/profile')
         ? '내 정보'
-        : pathname.startsWith('/map')
+        : pathname.startsWith('/map') || isReservationPath(pathname)
           ? '예약'
           : '홈';
 
@@ -1402,7 +1416,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                               ? '대시보드'
                               : pathname.startsWith('/profile')
                                 ? '내 정보'
-                                : pathname.startsWith('/map')
+                                : pathname.startsWith('/map') || isReservationPath(pathname)
                                   ? '예약'
                                   : '홈';
 

@@ -112,6 +112,15 @@ type Props = {
 };
 
 const LOGIN_PATH_PREFIXES = ['/login', '/auth'];
+const RESERVATION_PATH_PREFIXES = [
+  '/bookingdate',
+  '/bookingdate2',
+  '/confirm-booking',
+  '/booking',
+  '/payment/success',
+  '/bookingdetail',
+  '/refund',
+];
 const DEFERRED_INITIAL_LOAD_MS: Record<string, number> = {
   map: 800,
   dashboard: 5000,
@@ -258,6 +267,7 @@ function getPathnameForTab(tab?: string): string | null {
 
 function getOwnerNameForPath(pathname?: string): string {
   const path = pathname || '/';
+  if (RESERVATION_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return 'map';
   if (path.startsWith('/map')) return 'map';
   if (path.startsWith('/dashboard')) return 'dashboard';
   if (path.startsWith('/profile')) return 'profile';
