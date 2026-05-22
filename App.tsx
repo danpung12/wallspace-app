@@ -1489,6 +1489,22 @@ export default function App({ onLoggedInChange }: AppProps) {
                         }}
                       />
                     </View>
+
+                    {activeTabName === '홈' && mainPathname === '/exhibition-detail' && (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="전시 상세 뒤로가기"
+                        style={styles.exhibitionBackTouchCatcher}
+                        onPress={() => {
+                          setPendingTabName('홈');
+                          setActiveTabName('홈');
+                          setMainPathname('/');
+                          setRouteBottomNavVisible(true);
+                          setContentBottomNavVisible(true);
+                          webviewControllerRegistry.get('main')?.navigateToPath('/');
+                        }}
+                      />
+                    )}
                   </>
                 ) : (
                   <View style={styles.splashContainer} />
@@ -1835,6 +1851,8 @@ const styles = StyleSheet.create({
     elevation: 50,
   },
   tabNavigatorLayerHidden: {
+    display: 'none',
+    opacity: 0,
     height: 0,
     zIndex: -1,
     elevation: 0,
@@ -1857,6 +1875,16 @@ const styles = StyleSheet.create({
     opacity: 0,
     zIndex: -1,
     elevation: 0,
+  },
+  exhibitionBackTouchCatcher: {
+    position: 'absolute',
+    top: 92,
+    left: 0,
+    width: 148,
+    height: 140,
+    zIndex: 90,
+    elevation: 90,
+    backgroundColor: 'transparent',
   },
 
   overlay: {

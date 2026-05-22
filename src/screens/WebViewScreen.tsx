@@ -333,6 +333,13 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
             return;
           }
           var current = (window.location.pathname || '/') + (window.location.search || '');
+          function dispatchMapQuery() {
+            if (target.indexOf('/map?') !== 0) return;
+            try {
+              var url = new URL(target, window.location.href);
+              window.dispatchEvent(new CustomEvent('WITHART_MAP_QUERY', { detail: { path: target, search: url.search } }));
+            } catch (e) {}
+          }
           if (current === target) {
             if (target.indexOf('/map?') === 0) {
               try {
@@ -341,23 +348,42 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
                 if (placeId) {
                   window.dispatchEvent(new CustomEvent('WITHART_OPEN_MAP_PLACE', { detail: { placeId: placeId } }));
                 }
+                dispatchMapQuery();
               } catch (e) {}
             }
             return;
           }
 
+          var didAskNextRouter = false;
           try {
             window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = true;
+            if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+              try {
+                window.__WITHART_HANDLE_NATIVE_NAV(target);
+                didAskNextRouter = true;
+                setTimeout(dispatchMapQuery, 40);
+                setTimeout(dispatchMapQuery, 160);
+              } catch (e) {}
+            }
+          } catch (e) {}
+
+          setTimeout(function(){
             try {
+              var now0 = (window.location.pathname || '/') + (window.location.search || '');
+              if (now0 === target) {
+                dispatchMapQuery();
+                return;
+              }
               window.history.pushState({}, '', target);
               window.dispatchEvent(new PopStateEvent('popstate'));
               window.dispatchEvent(new Event('pushstate'));
+              dispatchMapQuery();
             } finally {
               setTimeout(function(){
                 try { window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = false; } catch (e) {}
               }, 0);
             }
-          } catch (e) {}
+          }, didAskNextRouter ? 80 : 0);
 
           setTimeout(function(){
             try {
@@ -372,14 +398,16 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
                 try { document.body.removeChild(a); } catch(e) {}
               }, 0);
             } catch (e) {}
-          }, 16);
+          }, didAskNextRouter ? 140 : 16);
 
           if (target === '/') {
             setTimeout(function(){
               try {
                 var now2 = (window.location.pathname || '/') + (window.location.search || '');
                 if (now2 === target) return;
-                window.location.replace(target);
+                if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+                  window.__WITHART_HANDLE_NATIVE_NAV(target);
+                }
               } catch (e) {}
             }, 260);
           }

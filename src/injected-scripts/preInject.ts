@@ -192,6 +192,88 @@ export const RN_WEBVIEW_PRE_INJECT = `
       try { setTimeout(reportBottomDiagnostics, 500); } catch(e){}
     } catch(e){}
   }catch(e){}
+  // Robust fallback for exhibition detail back buttons inside RN WebView.
+  try {
+    function __withartPostNative(msg) {
+      try {
+        var payload = JSON.stringify(msg);
+        if (window && window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+          window.ReactNativeWebView.postMessage(payload);
+          return true;
+        }
+        if (window && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView && typeof window.webkit.messageHandlers.ReactNativeWebView.postMessage === 'function') {
+          window.webkit.messageHandlers.ReactNativeWebView.postMessage(payload);
+          return true;
+        }
+      } catch(e){}
+      return false;
+    }
+    function __withartCurrentPath() {
+      try {
+        return (window.location.pathname || '/') + (window.location.search || '') + (window.location.hash || '');
+      } catch(e) {
+        return '';
+      }
+    }
+    function __withartGoBackOrHome() {
+      try {
+        var handledByNext = false;
+        try {
+          if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+            window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = true;
+            window.__WITHART_HANDLE_NATIVE_NAV('/');
+            handledByNext = true;
+          }
+        } catch(e) {}
+        __withartPostNative({ type: 'NAVIGATE_TAB', pathname: '/' });
+        if (handledByNext) {
+          setTimeout(function(){
+            try { window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = false; } catch(e) {}
+          }, 120);
+          return;
+        }
+      } catch(e) {}
+    }
+    function __withartInstallExhibitionBackBridge() {
+      try {
+        if (window.__WITHART_EXHIBITION_BACK_BRIDGE__) return;
+        window.__WITHART_EXHIBITION_BACK_BRIDGE__ = true;
+
+        document.addEventListener('click', function(event) {
+          try {
+            if ((window.location.pathname || '') !== '/exhibition-detail') return;
+            var target = event.target;
+            var button = target && target.closest ? target.closest('button') : null;
+            if (!button) return;
+
+            var label = (button.getAttribute('aria-label') || '').toLowerCase();
+            var text = (button.textContent || '').replace(/\\s+/g, '').toLowerCase();
+            var inHeader = false;
+            try { inHeader = !!button.closest('header'); } catch(e) {}
+
+            var rect = null;
+            try { rect = button.getBoundingClientRect(); } catch(e) {}
+            var leftHeaderButton = !!(inHeader && rect && rect.left < 120 && rect.top < 140);
+            var isBackButton =
+              label.indexOf('뒤로') !== -1 ||
+              label.indexOf('back') !== -1 ||
+              text === '뒤로' ||
+              text.indexOf('돌아가기') !== -1 ||
+              leftHeaderButton;
+
+            if (!isBackButton) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') {
+              event.stopImmediatePropagation();
+            }
+            __withartGoBackOrHome();
+          } catch(e) {}
+        }, true);
+      } catch(e) {}
+    }
+    __withartInstallExhibitionBackBridge();
+  } catch(e) {}
   // --- Route -> Native tab sync: post active tab to native when path changes ---
   try {
     var __last_pathname = (location && location.pathname) ? location.pathname : '';
