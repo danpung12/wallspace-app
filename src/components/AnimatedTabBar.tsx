@@ -23,6 +23,7 @@ export default function AnimatedTabBar({ state, descriptors, navigation, isVisib
   const translateX = useRef(new Animated.Value(0)).current;
   const indicatorScale = useRef(new Animated.Value(1)).current;
   const iconScales = useRef(state.routes.map(() => new Animated.Value(1))).current;
+  const visibilityAnim = useRef(new Animated.Value(isVisible ? 1 : 0)).current;
 
   const visualIndex = React.useMemo(() => {
     if (!activeRouteName) return state.index;
@@ -54,20 +55,31 @@ export default function AnimatedTabBar({ state, descriptors, navigation, isVisib
     setWidth(e.nativeEvent.layout.width);
   };
 
-  if (!isVisible) {
-    return null;
-  }
+  useEffect(() => {
+    Animated.timing(visibilityAnim, {
+      toValue: isVisible ? 1 : 0,
+      duration: isVisible ? 180 : 140,
+      useNativeDriver: true,
+    }).start();
+  }, [isVisible, visibilityAnim]);
 
   const itemWidth = width && state.routes.length ? width / state.routes.length : 64;
   const bottomInset = Math.max(insets.bottom, 0);
   const baseBottomPadding = Platform.OS === 'ios' ? 12 : 8;
+  const translateY = visibilityAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [120, 0],
+  });
 
   return (
-    <View
+    <Animated.View
+      pointerEvents={isVisible ? 'auto' : 'none'}
       style={[
         styles.container,
         {
+          opacity: visibilityAnim,
           paddingBottom: baseBottomPadding + bottomInset,
+          transform: [{ translateY }],
         },
       ]}
       onLayout={onLayout}
@@ -127,7 +139,7 @@ export default function AnimatedTabBar({ state, descriptors, navigation, isVisib
           },
         ]}
       />
-    </View>
+    </Animated.View>
   );
 }
 

@@ -676,6 +676,8 @@ export default function App({ onLoggedInChange }: AppProps) {
   const [emailLoginNonce, setEmailLoginNonce] = useState(0);
   const [mainWebViewNonce, setMainWebViewNonce] = useState(0);
   const ignoreMapNavigationUntilRef = useRef(0);
+  const contentBottomNavVisibleRef = useRef(true);
+  const contentBottomNavShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authHydrationPending = useAuthFlowStore((s) => s.authHydrationPending);
   const setAuthHydrationPending = useAuthFlowStore((s) => s.setAuthHydrationPending);
   const setNavTransitionPending = useAuthFlowStore((s) => s.setNavTransitionPending);
@@ -695,6 +697,29 @@ export default function App({ onLoggedInChange }: AppProps) {
   const shouldMountWebView = isLoggedIn || authHydrationPending;
   const isBottomNavVisible = routeBottomNavVisible && contentBottomNavVisible;
 
+  const applyContentBottomNavVisible = useCallback((nextVisible: boolean) => {
+    if (contentBottomNavShowTimerRef.current) {
+      clearTimeout(contentBottomNavShowTimerRef.current);
+      contentBottomNavShowTimerRef.current = null;
+    }
+
+    if (!nextVisible) {
+      if (contentBottomNavVisibleRef.current) {
+        contentBottomNavVisibleRef.current = false;
+        setContentBottomNavVisible(false);
+      }
+      return;
+    }
+
+    contentBottomNavShowTimerRef.current = setTimeout(() => {
+      contentBottomNavShowTimerRef.current = null;
+      if (!contentBottomNavVisibleRef.current) {
+        contentBottomNavVisibleRef.current = true;
+        setContentBottomNavVisible(true);
+      }
+    }, 140);
+  }, []);
+
   const handleBottomNavVisibilityMessage = useCallback((type: string, data?: any) => {
     const nextVisible = data?.visible !== false;
 
@@ -703,15 +728,28 @@ export default function App({ onLoggedInChange }: AppProps) {
       return;
     }
 
-    setContentBottomNavVisible(nextVisible);
-  }, []);
+    applyContentBottomNavVisible(nextVisible);
+  }, [applyContentBottomNavVisible]);
 
   useEffect(() => {
     if (isAppContentReady) {
+      if (contentBottomNavShowTimerRef.current) {
+        clearTimeout(contentBottomNavShowTimerRef.current);
+        contentBottomNavShowTimerRef.current = null;
+      }
+      contentBottomNavVisibleRef.current = true;
       setRouteBottomNavVisible(true);
       setContentBottomNavVisible(true);
     }
   }, [isAppContentReady]);
+
+  useEffect(() => {
+    return () => {
+      if (contentBottomNavShowTimerRef.current) {
+        clearTimeout(contentBottomNavShowTimerRef.current);
+      }
+    };
+  }, []);
 
   // isLoggedIn 상태 변경 → AppWrapper에 알림
   const setIsLoggedIn = useCallback((v: boolean) => {
@@ -1514,7 +1552,6 @@ export default function App({ onLoggedInChange }: AppProps) {
               <View
                 style={[
                   styles.tabNavigatorLayer,
-                  (!isAppContentReady || !isBottomNavVisible) && styles.tabNavigatorLayerHidden,
                 ]}
                 pointerEvents={isAppContentReady && isBottomNavVisible ? 'box-none' : 'none'}
               >
@@ -1849,13 +1886,6 @@ const styles = StyleSheet.create({
     height: 144,
     zIndex: 50,
     elevation: 50,
-  },
-  tabNavigatorLayerHidden: {
-    display: 'none',
-    opacity: 0,
-    height: 0,
-    zIndex: -1,
-    elevation: 0,
   },
   transparentTabScene: {
     backgroundColor: 'transparent',
