@@ -521,8 +521,16 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
   const handleNavChange = useCallback((navState: WebViewNavigation) => {
     try {
       const parsed = new URL(navState.url);
+      const base = new URL(url);
       const pathname = parsed.pathname || '/';
       const fullPath = `${pathname}${parsed.search || ''}`;
+
+      if (parsed.origin !== base.origin) {
+        currentPathRef.current = fullPath;
+        lastKnownPathRef.current = fullPath;
+        return;
+      }
+
       const ownerName = getOwnerNameForPath(pathname);
 
       if (name && ownerName !== name) {
