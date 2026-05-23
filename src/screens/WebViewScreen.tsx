@@ -601,8 +601,8 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         return;
       }
 
-      currentPathRef.current = pathname;
-      lastKnownPathRef.current = pathname;
+      currentPathRef.current = fullPath;
+      lastKnownPathRef.current = fullPath;
       onPathChange?.(pathname);
 
       // 로그인 플로우에서는 main WebView가 /login|/auth를 벗어났을 때만 READY
@@ -645,6 +645,13 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
       try {
         const msg = JSON.parse(event.nativeEvent.data);
         if (!msg?.type) return;
+
+        if (
+          (msg.type === 'SET_BOTTOM_NAV_VISIBLE' || msg.type === 'SET_TABS_VISIBILITY') &&
+          typeof msg.pathname !== 'string'
+        ) {
+          msg.pathname = currentPathRef.current || lastKnownPathRef.current || targetPath || '/';
+        }
 
         const restoreOwnRouteIfCrossTabNavigation = (pathname?: string) => {
           try {

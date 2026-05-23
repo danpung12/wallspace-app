@@ -116,6 +116,44 @@ function isReservationPath(pathname: string): boolean {
   );
 }
 
+const BOTTOM_NAV_HIDDEN_PATH_PREFIXES = [
+  '/login',
+  '/onboarding',
+  '/find-password',
+  '/reset-password',
+  '/select-type',
+  '/bookingdate',
+  '/bookingdate2',
+  '/confirm-booking',
+  '/booking',
+  '/payment/success',
+  '/bookingdetail',
+  '/refund',
+  '/dashboard/add',
+  '/dashboard/add-store',
+  '/auth/link/naver',
+  '/auth/link-account',
+  '/auth/callback/naver',
+];
+
+function shouldHideBottomNavForPath(pathnameWithSearch?: string): boolean {
+  if (!pathnameWithSearch) return false;
+
+  const [rawPathname, rawSearch = ''] = pathnameWithSearch.split('?');
+  const pathname = rawPathname && rawPathname !== '/' && rawPathname.endsWith('/')
+    ? rawPathname.slice(0, -1)
+    : rawPathname || '/';
+  const search = rawSearch ? `?${rawSearch}` : '';
+
+  if (pathname === '/map' && new URLSearchParams(search).has('placeId')) {
+    return true;
+  }
+
+  return BOTTOM_NAV_HIDDEN_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
 const FULLSCREEN_WEB_OVERLAY_SCRIPT = `(function(){
   try {
     document.documentElement.style.setProperty('--safe-area-top', '0px');
@@ -739,10 +777,28 @@ export default function App({ onLoggedInChange }: AppProps) {
 
   const handleBottomNavVisibilityMessage = useCallback((type: string, data?: any) => {
     const nextVisible = data?.visible !== false;
+    const messagePathname = typeof data?.pathname === 'string' ? data.pathname : undefined;
 
     if (type === 'SET_TABS_VISIBILITY') {
       routeBottomNavVisibleRef.current = nextVisible;
       setRouteBottomNavVisible(nextVisible);
+      return;
+    }
+
+    if (!nextVisible) {
+      routeBottomNavVisibleRef.current = false;
+      setRouteBottomNavVisible(false);
+      applyContentBottomNavVisible(false);
+      return;
+    }
+
+    if (!routeBottomNavVisibleRef.current) {
+      if (messagePathname && !shouldHideBottomNavForPath(messagePathname)) {
+        routeBottomNavVisibleRef.current = true;
+        setRouteBottomNavVisible(true);
+        applyContentBottomNavVisible(true);
+        return;
+      }
       return;
     }
 
