@@ -692,6 +692,7 @@ export default function App({ onLoggedInChange }: AppProps) {
   const [emailLoginNonce, setEmailLoginNonce] = useState(0);
   const [mainWebViewNonce, setMainWebViewNonce] = useState(0);
   const ignoreMapNavigationUntilRef = useRef(0);
+  const routeBottomNavVisibleRef = useRef(true);
   const contentBottomNavVisibleRef = useRef(true);
   const contentBottomNavShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authHydrationPending = useAuthFlowStore((s) => s.authHydrationPending);
@@ -740,10 +741,13 @@ export default function App({ onLoggedInChange }: AppProps) {
     const nextVisible = data?.visible !== false;
 
     if (type === 'SET_TABS_VISIBILITY') {
+      routeBottomNavVisibleRef.current = nextVisible;
       setRouteBottomNavVisible(nextVisible);
       return;
     }
 
+    routeBottomNavVisibleRef.current = nextVisible;
+    setRouteBottomNavVisible(nextVisible);
     applyContentBottomNavVisible(nextVisible);
   }, [applyContentBottomNavVisible]);
 
@@ -753,9 +757,6 @@ export default function App({ onLoggedInChange }: AppProps) {
         clearTimeout(contentBottomNavShowTimerRef.current);
         contentBottomNavShowTimerRef.current = null;
       }
-      contentBottomNavVisibleRef.current = true;
-      setRouteBottomNavVisible(true);
-      setContentBottomNavVisible(true);
     }
   }, [isAppContentReady]);
 
@@ -1443,7 +1444,9 @@ export default function App({ onLoggedInChange }: AppProps) {
                             setMainContentReady(true);
                             setAuthHydrationPending(false);
                             setForceTopLoadingOverlay(false);
+                            routeBottomNavVisibleRef.current = true;
                             setRouteBottomNavVisible(true);
+                            contentBottomNavVisibleRef.current = true;
                             setContentBottomNavVisible(true);
                             return;
                           }
@@ -1553,7 +1556,9 @@ export default function App({ onLoggedInChange }: AppProps) {
                           setPendingTabName('홈');
                           setActiveTabName('홈');
                           setMainPathname('/');
+                          routeBottomNavVisibleRef.current = true;
                           setRouteBottomNavVisible(true);
+                          contentBottomNavVisibleRef.current = true;
                           setContentBottomNavVisible(true);
                           webviewControllerRegistry.get('main')?.navigateToPath('/');
                         }}

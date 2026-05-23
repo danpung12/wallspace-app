@@ -25,6 +25,19 @@ export const THEME_COLOR_SCRIPT = `
     } catch(e) { return false; }
   }
 
+  function isExternalPaymentHost() {
+    try {
+      var host = (window.location && window.location.hostname ? window.location.hostname : '').toLowerCase();
+      var isAppHost =
+        host === 'withart.vercel.app' ||
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '10.0.2.2' ||
+        host.endsWith('.vercel.app');
+      return !!host && !isAppHost;
+    } catch(e) { return false; }
+  }
+
   function applyBookingChromeVisibility(pathname) {
     try {
       var isBookingFlow = routeMatches(pathname, bookingFlowRoutes);
@@ -47,6 +60,25 @@ export const THEME_COLOR_SCRIPT = `
     } catch(e) {}
   }
 
+  function applyEmbeddedTabDomVisibility(visible) {
+    try {
+      document.documentElement.classList.toggle('withart-hide-bottom-nav', !visible);
+      var style = document.getElementById('__withart_hide_bottom_nav__');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = '__withart_hide_bottom_nav__';
+        style.textContent = [
+          'html.withart-hide-bottom-nav footer.fixed.bottom-0.left-0.right-0,',
+          'html.withart-hide-bottom-nav div.fixed.bottom-0.left-0.right-0.z-0 {',
+          '  display: none !important;',
+          '  pointer-events: none !important;',
+          '}'
+        ].join('\\n');
+        (document.head || document.documentElement).appendChild(style);
+      }
+    } catch(e) {}
+  }
+
   function getCurrentPathname() {
     try {
       return window.location.pathname || '/';
@@ -57,11 +89,14 @@ export const THEME_COLOR_SCRIPT = `
     try {
       var normalized = pathname && pathname !== '/' && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname || '/';
       applyBookingChromeVisibility(normalized);
-      var shouldShowTabs = !routeMatches(normalized, hideOnRoutes);
-      var key = normalized + ':' + (shouldShowTabs ? '1' : '0');
+      var isPaymentCheckout = isExternalPaymentHost();
+      var isMapPlaceDetail = normalized === '/map' && !!(window.location && window.location.search && window.location.search.indexOf('placeId=') !== -1);
+      var shouldShowTabs = !isPaymentCheckout && !isMapPlaceDetail && !routeMatches(normalized, hideOnRoutes);
+      applyEmbeddedTabDomVisibility(shouldShowTabs);
+      var key = (isPaymentCheckout ? 'external-payment:' + window.location.host + normalized : normalized + (window.location.search || '')) + ':' + (shouldShowTabs ? '1' : '0');
       if (lastTabVisibilityKey === key) return;
       lastTabVisibilityKey = key;
-      var msg = { type: 'SET_TABS_VISIBILITY', visible: shouldShowTabs, pathname: normalized };
+      var msg = { type: 'SET_TABS_VISIBILITY', visible: shouldShowTabs, pathname: isPaymentCheckout ? '__external_payment__' : normalized };
       if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
         window.ReactNativeWebView.postMessage(JSON.stringify(msg));
       }

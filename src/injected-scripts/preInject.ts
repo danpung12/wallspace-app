@@ -276,7 +276,7 @@ export const RN_WEBVIEW_PRE_INJECT = `
   } catch(e) {}
   // --- Route -> Native tab sync: post active tab to native when path changes ---
   try {
-    var __last_pathname = (location && location.pathname) ? location.pathname : '';
+    var __last_pathname = ((location && location.pathname) ? location.pathname : '') + ((location && location.search) ? location.search : '');
     function __nativeTabForPath(p) {
       try {
         var path = p || '/';
@@ -323,8 +323,9 @@ export const RN_WEBVIEW_PRE_INJECT = `
     function __postActiveTabIfChanged() {
       try {
         var p = (location && location.pathname) ? location.pathname : '/';
-        if (p !== __last_pathname) {
-          __last_pathname = p;
+        var currentKey = p + ((location && location.search) ? location.search : '');
+        if (currentKey !== __last_pathname) {
+          __last_pathname = currentKey;
           var tabMap = {'/':'Home','/map':'Map','/dashboard':'Dashboard','/profile':'Profile'};
           var tab = null;
           for (var k in tabMap) {
@@ -344,10 +345,30 @@ export const RN_WEBVIEW_PRE_INJECT = `
           try {
             var hideOnRoutes = ['/login','/onboarding','/find-password','/reset-password','/select-type','/select-type/guest','/select-type/artist','/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund','/dashboard/add','/dashboard/add-store','/auth/link/naver','/auth/link-account','/auth/callback/naver'];
             var normalized = p && p !== '/' && p.endsWith('/') ? p.slice(0, -1) : p || '/';
-            var shouldShowTabs = !hideOnRoutes.some(function(route) {
+            var host = (location && location.hostname ? location.hostname : '').toLowerCase();
+            var isAppHost = host === 'withart.vercel.app' || host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2' || host.endsWith('.vercel.app');
+            var isPaymentCheckout = !!host && !isAppHost;
+            var isMapPlaceDetail = normalized === '/map' && !!(location && location.search && location.search.indexOf('placeId=') !== -1);
+            var shouldShowTabs = !isPaymentCheckout && !isMapPlaceDetail && !hideOnRoutes.some(function(route) {
               return normalized === route || normalized.indexOf(route + '/') === 0;
             });
-            var msg = { type: 'SET_TABS_VISIBILITY', visible: shouldShowTabs, pathname: normalized };
+            try {
+              document.documentElement.classList.toggle('withart-hide-bottom-nav', !shouldShowTabs);
+              var style = document.getElementById('__withart_hide_bottom_nav__');
+              if (!style) {
+                style = document.createElement('style');
+                style.id = '__withart_hide_bottom_nav__';
+                style.textContent = [
+                  'html.withart-hide-bottom-nav footer.fixed.bottom-0.left-0.right-0,',
+                  'html.withart-hide-bottom-nav div.fixed.bottom-0.left-0.right-0.z-0 {',
+                  '  display: none !important;',
+                  '  pointer-events: none !important;',
+                  '}'
+                ].join('\\n');
+                (document.head || document.documentElement).appendChild(style);
+              }
+            } catch(e) {}
+            var msg = { type: 'SET_TABS_VISIBILITY', visible: shouldShowTabs, pathname: isPaymentCheckout ? '__external_payment__' : normalized };
             if (window && window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
               window.ReactNativeWebView.postMessage(JSON.stringify(msg));
             }

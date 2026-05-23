@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useContext, useEffect } from 'react';
-import { StyleSheet, View, Alert, Platform } from 'react-native';
+import { StyleSheet, View, Alert, Platform, Linking } from 'react-native';
 import WebView, { WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
@@ -257,6 +257,59 @@ function isLoginLikePath(pathname: string): boolean {
   return LOGIN_PATH_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
 }
 
+function hideTabsForExternalCheckout(onCustomMessage?: (type: string, data?: any) => void) {
+  onCustomMessage?.('SET_TABS_VISIBILITY', {
+    type: 'SET_TABS_VISIBILITY',
+    visible: false,
+    pathname: '__external_payment__',
+  });
+}
+
+function getIntentParam(requestUrl: string, key: string): string | null {
+  try {
+    const match = requestUrl.match(new RegExp(`[;#]${key}=([^;]+)`));
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function shouldOpenOutsideWebView(requestUrl?: string): boolean {
+  try {
+    if (!requestUrl || requestUrl === 'about:blank') return false;
+    const scheme = requestUrl.split(':')[0]?.toLowerCase();
+    if (!scheme) return false;
+    return !['http', 'https', 'about', 'data', 'blob', 'javascript'].includes(scheme);
+  } catch (_) {
+    return false;
+  }
+}
+
+function openOutsideWebView(requestUrl: string) {
+  const packageName = requestUrl.startsWith('intent://')
+    ? getIntentParam(requestUrl, 'package')
+    : null;
+  const fallbackUrl = requestUrl.startsWith('intent://')
+    ? getIntentParam(requestUrl, 'S.browser_fallback_url')
+    : null;
+
+  const candidates = [
+    requestUrl,
+    fallbackUrl,
+    packageName ? `market://details?id=${packageName}` : null,
+    packageName ? `https://play.google.com/store/apps/details?id=${packageName}` : null,
+  ].filter((candidate): candidate is string => !!candidate);
+
+  (async () => {
+    for (const candidate of candidates) {
+      try {
+        await Linking.openURL(candidate);
+        return;
+      } catch (_) {}
+    }
+  })();
+}
+
 function getPathnameForTab(tab?: string): string | null {
   if (tab === 'Home') return '/';
   if (tab === 'Map') return '/map';
@@ -265,8 +318,14 @@ function getPathnameForTab(tab?: string): string | null {
   return null;
 }
 
-function getOwnerNameForPath(pathname?: string): string {
+function getOwnerNameForPath(pathname?: string, currentOwner?: string): string {
   const path = pathname || '/';
+  if (
+    currentOwner === 'dashboard' &&
+    (path === '/bookingdetail' || path.startsWith('/bookingdetail/') || path.startsWith('/bookingdetail?'))
+  ) {
+    return 'dashboard';
+  }
   if (
     RESERVATION_PATH_PREFIXES.some(
       (prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`),
@@ -526,12 +585,13 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
       const fullPath = `${pathname}${parsed.search || ''}`;
 
       if (parsed.origin !== base.origin) {
+        hideTabsForExternalCheckout(onCustomMessage);
         currentPathRef.current = fullPath;
         lastKnownPathRef.current = fullPath;
         return;
       }
 
-      const ownerName = getOwnerNameForPath(pathname);
+      const ownerName = getOwnerNameForPath(pathname, name);
 
       if (name && ownerName !== name) {
         onCustomMessage?.('NAVIGATE_TAB', { type: 'NAVIGATE_TAB', pathname: fullPath });
@@ -557,12 +617,20 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
       const requestUrl = typeof request?.url === 'string' ? request.url : '';
       if (!requestUrl || requestUrl === 'about:blank') return true;
 
+      if (shouldOpenOutsideWebView(requestUrl)) {
+        openOutsideWebView(requestUrl);
+        return false;
+      }
+
       const parsed = new URL(requestUrl);
       const base = new URL(url);
-      if (parsed.origin !== base.origin) return true;
+      if (parsed.origin !== base.origin) {
+        hideTabsForExternalCheckout(onCustomMessage);
+        return true;
+      }
 
       const pathname = `${parsed.pathname || '/'}${parsed.search || ''}`;
-      const ownerName = getOwnerNameForPath(parsed.pathname || '/');
+      const ownerName = getOwnerNameForPath(parsed.pathname || '/', name);
       if (name && ownerName !== name) {
         onCustomMessage?.('NAVIGATE_TAB', { type: 'NAVIGATE_TAB', pathname });
         return false;
@@ -581,7 +649,7 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         const restoreOwnRouteIfCrossTabNavigation = (pathname?: string) => {
           try {
             if (!name || !pathname) return;
-            if (getOwnerNameForPath(pathname) === name) return;
+            if (getOwnerNameForPath(pathname, name) === name) return;
 
             const ownPath = targetPath || '/';
             const js = `(function(){
@@ -613,6 +681,10 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         };
 
         if (msg.type === 'PRE_NAVIGATE' && msg.pathname) {
+          if (name && getOwnerNameForPath(msg.pathname, name) === name) {
+            return;
+          }
+
           try {
             webViewRef.current?.injectJavaScript(
               `(function(){try{window.__RN_NAV_ACK=true;}catch(e){}})();true;`,
@@ -624,6 +696,10 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         }
 
         if (msg.type === 'NAVIGATE_TAB' && msg.pathname) {
+          if (name && getOwnerNameForPath(msg.pathname, name) === name) {
+            return;
+          }
+
           try {
             webViewRef.current?.injectJavaScript(
               `(function(){try{window.__RN_NAV_ACK=true;}catch(e){}})();true;`,
