@@ -14,7 +14,7 @@ export const THEME_COLOR_SCRIPT = `
   var mutationDetectTimer = null;
 
   // --- Tab visibility based on route ---
-  var hideOnRoutes = ['/login','/onboarding','/find-password','/reset-password','/select-type','/select-type/guest','/select-type/artist','/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund','/dashboard/add','/dashboard/add-store','/auth/link/naver','/auth/link-account','/auth/callback/naver'];
+  var hideOnRoutes = ['/login','/onboarding','/find-password','/reset-password','/select-type','/select-type/guest','/select-type/artist','/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund','/dashboard/add','/dashboard/add-store','/manager-booking-approval','/auth/link/naver','/auth/link-account','/auth/callback/naver'];
   var bookingFlowRoutes = ['/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund'];
 
   function routeMatches(pathname, routes) {

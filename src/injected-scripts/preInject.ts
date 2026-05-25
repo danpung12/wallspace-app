@@ -282,6 +282,7 @@ export const RN_WEBVIEW_PRE_INJECT = `
         var path = p || '/';
         if (path.indexOf('/map') === 0) return 'Map';
         if (path.indexOf('/dashboard') === 0) return 'Dashboard';
+        if (path.indexOf('/manager-booking-approval') === 0) return 'Dashboard';
         if (path.indexOf('/profile') === 0) return 'Profile';
         if (path === '/' || path.indexOf('/?') === 0) return 'Home';
       } catch(e){}
@@ -343,7 +344,7 @@ export const RN_WEBVIEW_PRE_INJECT = `
           } catch(e){}
           // Also send tab visibility based on route
           try {
-            var hideOnRoutes = ['/login','/onboarding','/find-password','/reset-password','/select-type','/select-type/guest','/select-type/artist','/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund','/dashboard/add','/dashboard/add-store','/auth/link/naver','/auth/link-account','/auth/callback/naver'];
+            var hideOnRoutes = ['/login','/onboarding','/find-password','/reset-password','/select-type','/select-type/guest','/select-type/artist','/bookingdate','/bookingdate2','/confirm-booking','/booking','/payment/success','/bookingdetail','/refund','/dashboard/add','/dashboard/add-store','/manager-booking-approval','/auth/link/naver','/auth/link-account','/auth/callback/naver'];
             var normalized = p && p !== '/' && p.endsWith('/') ? p.slice(0, -1) : p || '/';
             var host = (location && location.hostname ? location.hostname : '').toLowerCase();
             var isAppHost = host === 'withart.vercel.app' || host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2' || host.endsWith('.vercel.app');

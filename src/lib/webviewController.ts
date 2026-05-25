@@ -14,6 +14,7 @@ type InjectSessionPayload = {
 type WebViewController = {
   redirectFromLoginIfNeeded: () => void;
   injectSession: (payload?: InjectSessionPayload) => void;
+  injectJavaScript: (script: string) => void;
   navigateToPath: (path: string) => void;
   reload: () => void;
   getCurrentPath: () => string | null;
@@ -55,6 +56,10 @@ export const webviewControllerRegistry: ControllerRegistry = {
       if (!ctrl) return;
       if (method === 'injectSession') {
         ctrl.injectSession(payload as { accessToken?: string; refreshToken?: string; tokenExpiresAt?: string });
+        return;
+      }
+      if (method === 'injectJavaScript') {
+        ctrl.injectJavaScript((payload as string) || '');
         return;
       }
       if (method === 'navigateToPath') {

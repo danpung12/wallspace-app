@@ -100,6 +100,211 @@ const DASHBOARD_SAFE_TOP_SCRIPT = `(function(){
   try { setTimeout(applyDashboardSafeTop, 1200); } catch (e) {}
 })();true;`;
 
+const CHAT_SAFE_TOP_SCRIPT = `(function(){
+  function isChatPath() {
+    try {
+      var path = (window.location && window.location.pathname) || '';
+      return path === '/chat' || path.indexOf('/chat/') === 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function applyChatSafeTop() {
+    try {
+      if (!isChatPath()) return;
+
+      var candidates = Array.prototype.slice.call(document.querySelectorAll('.rn-safe-top-header, .sticky.top-0'));
+      for (var i = 0; i < candidates.length; i += 1) {
+        var header = candidates[i];
+        if (!header || !header.classList) continue;
+        var style = window.getComputedStyle ? window.getComputedStyle(header) : null;
+        if (style && style.display === 'none') continue;
+        if (style && style.position !== 'sticky' && style.position !== 'fixed') continue;
+
+        header.classList.add('rn-safe-top-header');
+        header.style.paddingTop = 'calc(max(env(safe-area-inset-top, 0px), 32px) + 0.5rem)';
+        header.style.minHeight = 'calc(max(env(safe-area-inset-top, 0px), 32px) + 56px)';
+        header.style.boxSizing = 'border-box';
+      }
+    } catch (e) {}
+  }
+
+  function installRouteHooks() {
+    try {
+      if (window.__WITHART_CHAT_SAFE_TOP_INSTALLED__) return;
+      window.__WITHART_CHAT_SAFE_TOP_INSTALLED__ = true;
+
+      var originalPushState = history.pushState;
+      history.pushState = function() {
+        var result = originalPushState.apply(this, arguments);
+        try { setTimeout(applyChatSafeTop, 0); } catch (e) {}
+        try { setTimeout(applyChatSafeTop, 120); } catch (e) {}
+        return result;
+      };
+
+      var originalReplaceState = history.replaceState;
+      history.replaceState = function() {
+        var result = originalReplaceState.apply(this, arguments);
+        try { setTimeout(applyChatSafeTop, 0); } catch (e) {}
+        try { setTimeout(applyChatSafeTop, 120); } catch (e) {}
+        return result;
+      };
+
+      try { window.addEventListener('popstate', function(){ setTimeout(applyChatSafeTop, 0); }); } catch (e) {}
+      try {
+        document.addEventListener('click', function(event) {
+          try {
+            if (!isChatPath()) return;
+            var target = event.target;
+            var button = target && target.closest ? target.closest('button') : null;
+            if (!button) return;
+            var icon = button.querySelector ? button.querySelector('.material-symbols-outlined') : null;
+            var iconText = icon && icon.textContent ? icon.textContent.trim() : '';
+            if (iconText !== 'close') return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            try {
+              if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+                window.__WITHART_HANDLE_NATIVE_NAV('/');
+                return;
+              }
+            } catch (e) {}
+
+            try {
+              history.replaceState({}, '', '/');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+              window.dispatchEvent(new Event('replaceState'));
+            } catch (e) {
+              try { window.location.replace('/'); } catch (ee) {}
+            }
+          } catch (e) {}
+        }, true);
+      } catch (e) {}
+      try {
+        new MutationObserver(function(){ applyChatSafeTop(); }).observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      } catch (e) {}
+    } catch (e) {}
+  }
+
+  installRouteHooks();
+  applyChatSafeTop();
+  try { document.addEventListener('DOMContentLoaded', applyChatSafeTop, { once: true }); } catch (e) {}
+  try { setTimeout(applyChatSafeTop, 80); } catch (e) {}
+  try { setTimeout(applyChatSafeTop, 400); } catch (e) {}
+  try { setTimeout(applyChatSafeTop, 1200); } catch (e) {}
+})();true;`;
+
+const ADD_STORE_WHITE_SHELL_SCRIPT = `(function(){
+  function isAddStorePath() {
+    try {
+      var path = (window.location && window.location.pathname) || '';
+      return path === '/dashboard/add-store' || path.indexOf('/dashboard/add-store/') === 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function applyAddStoreWhiteShell() {
+    try {
+      if (!isAddStorePath()) {
+        document.documentElement.classList.remove('add-store-white-shell');
+        if (document.body) document.body.classList.remove('add-store-white-shell');
+        document.documentElement.style.removeProperty('--page-bg');
+        document.documentElement.style.backgroundColor = '';
+        if (document.body) document.body.style.backgroundColor = '';
+        try {
+          if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'SET_NATIVE_SHELL_BACKGROUND',
+              active: false,
+              pathname: (window.location && window.location.pathname) || ''
+            }));
+          }
+        } catch (e) {}
+        return;
+      }
+
+      document.documentElement.classList.add('add-store-white-shell');
+      if (document.body) document.body.classList.add('add-store-white-shell');
+      document.documentElement.style.setProperty('--page-bg', '#FFFFFF');
+      document.documentElement.style.backgroundColor = '#FFFFFF';
+      if (document.body) document.body.style.backgroundColor = '#FFFFFF';
+      try {
+        if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SET_NATIVE_SHELL_BACKGROUND',
+            active: true,
+            color: '#FFFFFF',
+            pathname: (window.location && window.location.pathname) || ''
+          }));
+        }
+      } catch (e) {}
+
+      var style = document.getElementById('__withart_add_store_white_shell__');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = '__withart_add_store_white_shell__';
+        document.head.appendChild(style);
+      }
+      style.textContent = [
+        'html.add-store-white-shell, html.add-store-white-shell body, body.add-store-white-shell { background: #FFFFFF !important; background-color: #FFFFFF !important; }',
+        'html.add-store-white-shell.rn-webview::before, html.add-store-white-shell.rn-webview body::before { background: #FFFFFF !important; }',
+        'html.add-store-white-shell .prototype-body { background: #FFFFFF !important; background-color: #FFFFFF !important; min-height: var(--app-vh, 100dvh) !important; }',
+        'html.add-store-white-shell .mobile-container { background: #FFFFFF !important; background-color: #FFFFFF !important; }'
+      ].join('\\n');
+
+      var nodes = document.querySelectorAll('.prototype-body, .mobile-container');
+      for (var i = 0; i < nodes.length; i += 1) {
+        try { nodes[i].style.backgroundColor = '#FFFFFF'; } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
+  function installRouteHooks() {
+    try {
+      if (window.__WITHART_ADD_STORE_WHITE_SHELL_INSTALLED__) return;
+      window.__WITHART_ADD_STORE_WHITE_SHELL_INSTALLED__ = true;
+
+      var originalPushState = history.pushState;
+      history.pushState = function() {
+        var result = originalPushState.apply(this, arguments);
+        try { setTimeout(applyAddStoreWhiteShell, 0); } catch (e) {}
+        try { setTimeout(applyAddStoreWhiteShell, 120); } catch (e) {}
+        return result;
+      };
+
+      var originalReplaceState = history.replaceState;
+      history.replaceState = function() {
+        var result = originalReplaceState.apply(this, arguments);
+        try { setTimeout(applyAddStoreWhiteShell, 0); } catch (e) {}
+        try { setTimeout(applyAddStoreWhiteShell, 120); } catch (e) {}
+        return result;
+      };
+
+      try { window.addEventListener('popstate', function(){ setTimeout(applyAddStoreWhiteShell, 0); }); } catch (e) {}
+      try {
+        new MutationObserver(function(){ applyAddStoreWhiteShell(); }).observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      } catch (e) {}
+    } catch (e) {}
+  }
+
+  installRouteHooks();
+  applyAddStoreWhiteShell();
+  try { document.addEventListener('DOMContentLoaded', applyAddStoreWhiteShell, { once: true }); } catch (e) {}
+  try { setTimeout(applyAddStoreWhiteShell, 80); } catch (e) {}
+  try { setTimeout(applyAddStoreWhiteShell, 400); } catch (e) {}
+  try { setTimeout(applyAddStoreWhiteShell, 1200); } catch (e) {}
+})();true;`;
+
 type Props = {
   url: string;
   name?: string;
@@ -322,7 +527,20 @@ function getOwnerNameForPath(pathname?: string, currentOwner?: string): string {
   const path = pathname || '/';
   if (
     currentOwner === 'dashboard' &&
-    (path === '/bookingdetail' || path.startsWith('/bookingdetail/') || path.startsWith('/bookingdetail?'))
+    (
+      path === '/bookingdetail' ||
+      path.startsWith('/bookingdetail/') ||
+      path.startsWith('/bookingdetail?') ||
+      path === '/exhibition-detail' ||
+      path.startsWith('/exhibition-detail/') ||
+      path.startsWith('/exhibition-detail?') ||
+      path === '/location-detail' ||
+      path.startsWith('/location-detail/') ||
+      path.startsWith('/location-detail?') ||
+      path === '/manager-booking-approval' ||
+      path.startsWith('/manager-booking-approval/') ||
+      path.startsWith('/manager-booking-approval?')
+    )
   ) {
     return 'dashboard';
   }
@@ -333,6 +551,7 @@ function getOwnerNameForPath(pathname?: string, currentOwner?: string): string {
   ) return 'map';
   if (path.startsWith('/map')) return 'map';
   if (path.startsWith('/dashboard')) return 'dashboard';
+  if (path.startsWith('/manager-booking-approval')) return 'dashboard';
   if (path.startsWith('/profile')) return 'profile';
   return 'main';
 }
@@ -528,6 +747,11 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
     webviewControllerRegistry.set(name, {
       redirectFromLoginIfNeeded,
       injectSession,
+      injectJavaScript: (script: string) => {
+        try {
+          webViewRef.current?.injectJavaScript(script);
+        } catch (_) {}
+      },
       navigateToPath,
       reload,
       getCurrentPath: () => currentPathRef.current,
@@ -720,6 +944,9 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         if (msg.type === 'SET_ACTIVE_TAB') {
           const pathname = getPathnameForTab(msg.tab);
           if (pathname) {
+            if (name && getOwnerNameForPath(pathname, name) === name) {
+              return;
+            }
             onCustomMessage?.('NAVIGATE_TAB', { ...msg, pathname });
           }
           return;
@@ -780,9 +1007,9 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         onLoadEnd={handleLoadEnd}
         onNavigationStateChange={handleNavChange}
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
-        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}`}
+        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
-        injectedJavaScript={`${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}`}
+        injectedJavaScript={`${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         onError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;
           console.error('[WebView Error]', nativeEvent.description);

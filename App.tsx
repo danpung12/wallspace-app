@@ -16,6 +16,7 @@ import {
   Pressable,
   Animated,
   Easing,
+  PermissionsAndroid,
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -24,7 +25,6 @@ import { StatusBar } from 'expo-status-bar';
 
 import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
 const Ionicons: any = require('@expo/vector-icons/Ionicons').default;
@@ -53,6 +53,17 @@ import {
 
 const BASE_WEB_URL = 'https://withart.vercel.app';
 const WEBVIEW_READY_REVEAL_DELAY_MS = 350;
+const EAS_PROJECT_ID = '3c8f8e8a-dc1e-49ba-9c17-acb29407c2c8';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 // ---------- Error Boundary ----------
 class AppErrorBoundary extends Component<
@@ -131,6 +142,7 @@ const BOTTOM_NAV_HIDDEN_PATH_PREFIXES = [
   '/refund',
   '/dashboard/add',
   '/dashboard/add-store',
+  '/manager-booking-approval',
   '/auth/link/naver',
   '/auth/link-account',
   '/auth/callback/naver',
@@ -152,6 +164,42 @@ function shouldHideBottomNavForPath(pathnameWithSearch?: string): boolean {
   return BOTTOM_NAV_HIDDEN_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
+}
+
+function getNotificationNavigationPath(data?: Record<string, unknown> | null): string | null {
+  if (!data) return null;
+  const type = typeof data.type === 'string' ? data.type : '';
+  const reservationId =
+    typeof data.reservationId === 'string'
+      ? data.reservationId
+      : typeof data.relatedId === 'string'
+        ? data.relatedId
+        : '';
+
+  if (type === 'reservation_request' && reservationId) {
+    return `/manager-booking-approval?id=${encodeURIComponent(reservationId)}`;
+  }
+
+  if ((type === 'reservation_confirmed' || type === 'reservation_cancelled') && reservationId) {
+    return `/bookingdetail?id=${encodeURIComponent(reservationId)}`;
+  }
+
+  if (type === 'exhibition_reminder' || type === 'exhibition_guide') {
+    if (typeof data.guidePath === 'string' && data.guidePath.startsWith('/')) {
+      return data.guidePath;
+    }
+    const role = data.role === 'manager' ? 'manager' : 'artist';
+    return `/exhibition-guide?role=${role}${reservationId ? `&reservationId=${encodeURIComponent(reservationId)}` : ''}`;
+  }
+
+  return null;
+}
+
+function getWebViewNameForPath(pathname: string): 'main' | 'map' | 'dashboard' | 'profile' {
+  if (pathname.startsWith('/dashboard') || pathname.startsWith('/manager-booking-approval')) return 'dashboard';
+  if (pathname.startsWith('/profile')) return 'profile';
+  if (pathname.startsWith('/map') || isReservationPath(pathname)) return 'map';
+  return 'main';
 }
 
 const FULLSCREEN_WEB_OVERLAY_SCRIPT = `(function(){
@@ -240,14 +288,6 @@ const FULLSCREEN_WEB_OVERLAY_SCRIPT = `(function(){
 // ---------- 푸시 알림 ----------
 async function registerForPushNotificationsAsync(): Promise<string | null> {
   try {
-    if (!Device.isDevice) return null;
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    let finalStatus = existing;
-    if (existing !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') return null;
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'default',
@@ -255,8 +295,34 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#A3834C',
       });
+
+      if (Number(Platform.Version) >= 33) {
+        const hasNativePermission = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        );
+        if (!hasNativePermission) {
+          const nativeResult = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          );
+          if (nativeResult !== PermissionsAndroid.RESULTS.GRANTED) {
+            console.warn(`Android notification permission not granted: ${nativeResult}`);
+            return null;
+          }
+        }
+      }
     }
-    const { data } = await Notifications.getExpoPushTokenAsync();
+
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    let finalStatus = existing;
+    if (existing !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+      console.warn(`Push permission not granted: ${finalStatus}`);
+      return null;
+    }
+    const { data } = await Notifications.getExpoPushTokenAsync({ projectId: EAS_PROJECT_ID });
     return data;
   } catch (e) {
     console.warn('Push token error:', e);
@@ -264,23 +330,101 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
   }
 }
 
+async function getFreshStoredAuth(): Promise<{ accessToken: string; userId: string } | null> {
+  const [accessToken, refreshToken, tokenExpiresAt, userId] = await Promise.all([
+    SecureStore.getItemAsync('accessToken'),
+    SecureStore.getItemAsync('refreshToken'),
+    SecureStore.getItemAsync('tokenExpiresAt'),
+    SecureStore.getItemAsync('userId'),
+  ]);
+
+  const expiresAtMs = tokenExpiresAt ? parseInt(tokenExpiresAt, 10) : 0;
+  const hasFreshToken = accessToken && userId && (!expiresAtMs || expiresAtMs > Date.now() + 60_000);
+
+  if (hasFreshToken) {
+    if (refreshToken) {
+      await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }).catch(() => {});
+    }
+    return { accessToken, userId };
+  }
+
+  if (!refreshToken) return accessToken && userId ? { accessToken, userId } : null;
+
+  const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+  const session = data.session;
+  if (error || !session?.access_token || !session.user?.id) {
+    console.warn('Push token auth refresh failed:', error);
+    return accessToken && userId ? { accessToken, userId } : null;
+  }
+
+  const nextExpiresAtMs = session.expires_at ? session.expires_at * 1000 : Date.now() + 60 * 60 * 1000;
+  await Promise.all([
+    SecureStore.setItemAsync('accessToken', session.access_token),
+    SecureStore.setItemAsync('refreshToken', session.refresh_token ?? refreshToken),
+    SecureStore.setItemAsync('tokenExpiresAt', String(nextExpiresAtMs)),
+    SecureStore.setItemAsync('userId', session.user.id),
+  ]);
+
+  return { accessToken: session.access_token, userId: session.user.id };
+}
+
+async function savePushTokenDirectly(pushToken: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('user_push_tokens')
+    .upsert(
+      {
+        user_id: userId,
+        push_token: pushToken,
+        device_type: Platform.OS,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,push_token' },
+    );
+
+  if (error) throw error;
+}
+
 async function sendPushTokenToServer(pushToken: string): Promise<void> {
   try {
-    const stored = await SecureStore.getItemAsync('pushToken');
-    if (stored === pushToken) return;
-    const userId = await SecureStore.getItemAsync('userId');
-    if (!userId) {
-      await SecureStore.setItemAsync('pushToken', pushToken);
+    const auth = await getFreshStoredAuth();
+    if (!auth) {
+      console.warn('Push token skipped: no stored auth');
       return;
     }
     const res = await fetch(`${BASE_WEB_URL}/api/push-token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.accessToken}`,
+      },
       body: JSON.stringify({ pushToken, deviceType: Platform.OS }),
     });
-    if (res.ok) await SecureStore.setItemAsync('pushToken', pushToken);
+    const responseText = await res.text();
+    if (!res.ok) {
+      console.warn(`Push token API failed ${res.status}: ${responseText}`);
+      await savePushTokenDirectly(pushToken, auth.userId);
+    }
+
+    await Promise.all([
+      SecureStore.setItemAsync('pushToken', pushToken),
+      SecureStore.setItemAsync('pushTokenRegisteredAt', String(Date.now())),
+    ]);
   } catch (e) {
     console.warn('sendPushTokenToServer error:', e);
+  }
+}
+
+async function registerAndSendPushToken(reason: string): Promise<void> {
+  try {
+    const token = await registerForPushNotificationsAsync();
+    if (!token) {
+      console.warn(`Push token unavailable: ${reason}`);
+      return;
+    }
+    await sendPushTokenToServer(token);
+  } catch (e) {
+    console.warn(`Push notification setup failed (${reason}):`, e);
   }
 }
 
@@ -292,7 +436,10 @@ async function requestLocationPermission(): Promise<Location.LocationObject | nu
       console.warn('Location permission denied');
       return null;
     }
-    const location = await Location.getCurrentPositionAsync({});
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: true,
+    });
     return location;
   } catch (e) {
     console.warn('Location error:', e);
@@ -723,6 +870,8 @@ export default function App({ onLoggedInChange }: AppProps) {
   const [activeTabName, setActiveTabName] = useState<'홈' | '예약' | '대시보드' | '내 정보'>('홈');
   const [pendingTabName, setPendingTabName] = useState<'홈' | '예약' | '대시보드' | '내 정보' | null>(null);
   const [mainPathname, setMainPathname] = useState<string>('');
+  const [dashboardPathname, setDashboardPathname] = useState<string>('/dashboard');
+  const [nativeShellBackgroundOverride, setNativeShellBackgroundOverride] = useState<string | null>(null);
   const [forceTopLoadingOverlay, setForceTopLoadingOverlay] = useState(false);
   const [routeBottomNavVisible, setRouteBottomNavVisible] = useState(true);
   const [contentBottomNavVisible, setContentBottomNavVisible] = useState(true);
@@ -733,6 +882,7 @@ export default function App({ onLoggedInChange }: AppProps) {
   const routeBottomNavVisibleRef = useRef(true);
   const contentBottomNavVisibleRef = useRef(true);
   const contentBottomNavShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNotificationPathRef = useRef<string | null>(null);
   const authHydrationPending = useAuthFlowStore((s) => s.authHydrationPending);
   const setAuthHydrationPending = useAuthFlowStore((s) => s.setAuthHydrationPending);
   const setNavTransitionPending = useAuthFlowStore((s) => s.setNavTransitionPending);
@@ -751,6 +901,10 @@ export default function App({ onLoggedInChange }: AppProps) {
   // WebView는 세션 주입/리다이렉트가 필요해서, 표시 준비 전에도 미리 마운트해둔다.
   const shouldMountWebView = isLoggedIn || authHydrationPending;
   const isBottomNavVisible = routeBottomNavVisible && contentBottomNavVisible;
+  const isAddStoreActive =
+    activeTabName === '대시보드' &&
+    (dashboardPathname === '/dashboard/add-store' || dashboardPathname.startsWith('/dashboard/add-store/'));
+  const nativeShellBackground = nativeShellBackgroundOverride ?? (isAddStoreActive ? '#FFFFFF' : '#e8e3da');
 
   const applyContentBottomNavVisible = useCallback((nextVisible: boolean) => {
     if (contentBottomNavShowTimerRef.current) {
@@ -806,6 +960,70 @@ export default function App({ onLoggedInChange }: AppProps) {
     setRouteBottomNavVisible(nextVisible);
     applyContentBottomNavVisible(nextVisible);
   }, [applyContentBottomNavVisible]);
+
+  const handleNativeShellBackgroundMessage = useCallback((type: string, data?: any) => {
+    if (type !== 'SET_NATIVE_SHELL_BACKGROUND') return false;
+
+    if (data?.active && typeof data?.color === 'string') {
+      setNativeShellBackgroundOverride(data.color);
+    } else {
+      setNativeShellBackgroundOverride(null);
+    }
+
+    if (typeof data?.pathname === 'string' && data.pathname.startsWith('/dashboard')) {
+      setDashboardPathname(data.pathname);
+    }
+
+    return true;
+  }, []);
+
+  const handleUserModeChangedMessage = useCallback((type: string, data?: any) => {
+    if (type !== 'USER_MODE_CHANGED') return false;
+    const mode = data?.mode;
+    if (mode !== 'artist' && mode !== 'manager') return true;
+
+    const script = `(function(){
+      try {
+        var mode = ${JSON.stringify(mode)};
+        try {
+          localStorage.setItem('withart-user-mode', JSON.stringify({ state: { userMode: mode }, version: 0 }));
+        } catch (e) {}
+        try {
+          window.dispatchEvent(new CustomEvent('WITHART_USER_MODE_CHANGED', { detail: { mode: mode } }));
+        } catch (e) {}
+        try {
+          window.dispatchEvent(new Event('storage'));
+        } catch (e) {}
+      } catch (e) {}
+    })();true;`;
+
+    webviewControllerRegistry.callAll('injectJavaScript', script);
+    return true;
+  }, []);
+
+  const handleSharedWebViewMessage = useCallback((type: string, data?: any) => {
+    if (handleNativeShellBackgroundMessage(type, data)) return true;
+    if (handleUserModeChangedMessage(type, data)) return true;
+    return false;
+  }, [handleNativeShellBackgroundMessage, handleUserModeChangedMessage]);
+
+  const broadcastNativeLocation = useCallback((location: Location.LocationObject) => {
+    const payload = {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      accuracy: location.coords.accuracy,
+      timestamp: location.timestamp || Date.now(),
+      source: 'expo-location',
+    };
+    const script = `(function(){
+      try {
+        var payload = ${JSON.stringify(payload)};
+        window.__WITHART_NATIVE_LOCATION = payload;
+        window.dispatchEvent(new CustomEvent('WITHART_NATIVE_LOCATION', { detail: payload }));
+      } catch (e) {}
+    })();true;`;
+    webviewControllerRegistry.callAll('injectJavaScript', script);
+  }, []);
 
   useEffect(() => {
     if (isAppContentReady) {
@@ -1084,35 +1302,19 @@ export default function App({ onLoggedInChange }: AppProps) {
 
   // 푸시 알림 등록은 초기 렌더 이후 백그라운드에서 처리
   useEffect(() => {
-    if (!isLoggedIn || !mainContentReady) return;
+    if (!isLoggedIn) return;
 
     let mounted = true;
     const run = async () => {
-      try {
-        const token = await registerForPushNotificationsAsync();
-        if (!mounted) return;
-        if (token) await sendPushTokenToServer(token);
-      } catch (e) {
-        console.warn('Push notification setup failed:', e);
-      }
+      if (!mounted) return;
+      await registerAndSendPushToken(mainContentReady ? 'home-ready' : 'login');
     };
 
-    const timer = setTimeout(run, 3000);
+    const timer = setTimeout(run, mainContentReady ? 1000 : 1800);
     return () => {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [isLoggedIn, mainContentReady]);
-
-  // 위치 권한 요청
-  useEffect(() => {
-    if (!isLoggedIn || !mainContentReady) return;
-
-    const timer = setTimeout(() => {
-      requestLocationPermission();
-    }, 5000);
-
-    return () => clearTimeout(timer);
   }, [isLoggedIn, mainContentReady]);
 
   const onLayoutRootView = useCallback(async () => {
@@ -1399,7 +1601,7 @@ export default function App({ onLoggedInChange }: AppProps) {
       return;
     }
 
-    const nextTab = pathname.startsWith('/dashboard')
+    const nextTab = pathname.startsWith('/dashboard') || pathname.startsWith('/manager-booking-approval')
       ? '대시보드'
       : pathname.startsWith('/profile')
         ? '내 정보'
@@ -1408,6 +1610,7 @@ export default function App({ onLoggedInChange }: AppProps) {
           : '홈';
 
     if (nextTab === '대시보드') {
+      setDashboardPathname(pathname);
       setPendingTabName(nextTab);
       setActiveTabName(nextTab);
       webviewControllerRegistry.get('dashboard')?.navigateToPath(pathname);
@@ -1422,12 +1625,63 @@ export default function App({ onLoggedInChange }: AppProps) {
     } else {
       setPendingTabName(nextTab);
       setActiveTabName(nextTab);
-      setMainPathname('/');
-      webviewControllerRegistry.get('main')?.navigateToPath('/');
+      const targetPath = pathname.startsWith('/') ? pathname : '/';
+      setMainPathname(targetPath);
+      webviewControllerRegistry.get('main')?.navigateToPath(targetPath);
     }
 
     setTimeout(() => setNavTransitionPending(false), 500);
   }, [setNavTransitionPending]);
+
+  const navigateToNotificationPath = useCallback((path: string) => {
+    if (!path) return;
+    pendingNotificationPathRef.current = path;
+
+    if (!isLoggedIn) return;
+
+    const run = () => {
+      const targetWebViewName = getWebViewNameForPath(path);
+      handleNavigateTabMessage(path);
+      const ctrl = webviewControllerRegistry.get(targetWebViewName);
+      if (!ctrl) return;
+      ctrl.navigateToPath(path);
+      pendingNotificationPathRef.current = null;
+    };
+
+    [mainContentReady ? 80 : 450, 900, 1800, 3000].forEach((delay) => {
+      setTimeout(run, delay);
+    });
+  }, [handleNavigateTabMessage, isLoggedIn, mainContentReady]);
+
+  useEffect(() => {
+    const handleNotificationData = (data?: Record<string, unknown> | null) => {
+      const path = getNotificationNavigationPath(data);
+      if (path) navigateToNotificationPath(path);
+    };
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleNotificationData(response.notification.request.content.data as Record<string, unknown> | null);
+    });
+
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (response) {
+          handleNotificationData(response.notification.request.content.data as Record<string, unknown> | null);
+        }
+      })
+      .catch((error) => console.warn('[App] Failed to read last notification response:', error));
+
+    return () => {
+      subscription.remove();
+    };
+  }, [navigateToNotificationPath]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !mainContentReady || !pendingNotificationPathRef.current) return;
+    const path = pendingNotificationPathRef.current;
+    const timer = setTimeout(() => navigateToNotificationPath(path), 160);
+    return () => clearTimeout(timer);
+  }, [isLoggedIn, mainContentReady, navigateToNotificationPath]);
 
   if (!isReady || !isSessionChecked) {
     return (
@@ -1439,13 +1693,11 @@ export default function App({ onLoggedInChange }: AppProps) {
 
   return (
     <AppErrorBoundary>
-      <View style={styles.container} onLayout={onLayoutRootView}>
+      <View style={[styles.container, { backgroundColor: nativeShellBackground }]} onLayout={onLayoutRootView}>
         <SafeAreaProvider>
           <AuthContext.Provider value={{ isLoggedIn, onLogout }}>
             <NavigationContainer>
-              {Platform.OS !== 'android' && (
-                <StatusBar style="dark" backgroundColor="transparent" translucent />
-              )}
+              <StatusBar style="dark" backgroundColor={nativeShellBackground} translucent />
 
               <View
                 key={`web-${emailLoginNonce}`}
@@ -1496,6 +1748,10 @@ export default function App({ onLoggedInChange }: AppProps) {
                           }
                         }}
                         onCustomMessage={(type, data) => {
+                          if (handleSharedWebViewMessage(type, data)) {
+                            return;
+                          }
+
                           if (type === 'HOME_READY') {
                             setMainContentReady(true);
                             setAuthHydrationPending(false);
@@ -1541,6 +1797,17 @@ export default function App({ onLoggedInChange }: AppProps) {
                         targetPath="/map"
                         authPayload={webviewAuthPayload}
                         onCustomMessage={(type, data) => {
+                          if (handleSharedWebViewMessage(type, data)) {
+                            return;
+                          }
+
+                          if (type === 'REQUEST_NATIVE_LOCATION') {
+                            requestLocationPermission().then((location) => {
+                              if (location) broadcastNativeLocation(location);
+                            });
+                            return;
+                          }
+
                           if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
@@ -1565,7 +1832,14 @@ export default function App({ onLoggedInChange }: AppProps) {
                         name="dashboard"
                         targetPath="/dashboard"
                         authPayload={webviewAuthPayload}
+                        onPathChange={(pathname) => {
+                          setDashboardPathname((prev) => (prev === pathname ? prev : pathname));
+                        }}
                         onCustomMessage={(type, data) => {
+                          if (handleSharedWebViewMessage(type, data)) {
+                            return;
+                          }
+
                           if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
@@ -1591,6 +1865,10 @@ export default function App({ onLoggedInChange }: AppProps) {
                         targetPath="/profile"
                         authPayload={webviewAuthPayload}
                         onCustomMessage={(type, data) => {
+                          if (handleSharedWebViewMessage(type, data)) {
+                            return;
+                          }
+
                           if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
@@ -1682,6 +1960,9 @@ export default function App({ onLoggedInChange }: AppProps) {
                       if (!mapPath || !mapPath.startsWith('/map')) {
                         map?.navigateToPath('/map');
                       }
+                      requestLocationPermission().then((location) => {
+                        if (location) broadcastNativeLocation(location);
+                      });
                       setTimeout(() => setNavTransitionPending(false), 420);
                     },
                   }}

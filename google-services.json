@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "615310871701",
+    "project_id": "withart-new-3c8f8e8a",
+    "storage_bucket": "withart-new-3c8f8e8a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:615310871701:android:ecd2b3a6aab6fe75101f9c",
+        "android_client_info": {
+          "package_name": "com.withart.service"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD815JEg-SVnmLI0LFm3cFq0431yFxQ8zk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
