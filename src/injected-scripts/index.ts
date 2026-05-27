@@ -9,4 +9,5 @@
  */
 
 export { RN_WEBVIEW_PRE_INJECT } from './preInject';
+export { buildNativeViewportScript } from './nativeViewport';
 export { THEME_COLOR_SCRIPT, REQUEST_THEME_COLOR_SCRIPT } from './themeColor';

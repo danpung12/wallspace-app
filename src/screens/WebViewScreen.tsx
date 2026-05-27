@@ -1,11 +1,13 @@
 import React, { useRef, useCallback, useContext, useEffect } from 'react';
-import { StyleSheet, View, Alert, Platform, Linking } from 'react-native';
+import { StyleSheet, View, Alert, Platform, Linking, PixelRatio } from 'react-native';
 import WebView, { WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { AuthContext } from '../contexts/AuthContext';
 import { useAuthFlowStore } from '../store/authFlowStore';
 import { RN_WEBVIEW_PRE_INJECT } from '../injected-scripts/preInject';
+import { buildNativeViewportScript } from '../injected-scripts/nativeViewport';
 import { THEME_COLOR_SCRIPT } from '../injected-scripts/themeColor';
 import { webviewControllerRegistry } from '../lib/webviewController';
 import { useWebviewReady } from '../contexts/WebviewReadyContext';
@@ -420,6 +422,50 @@ const ADD_STORE_WHITE_SHELL_SCRIPT = `(function(){
   try { setTimeout(applyAddStoreWhiteShell, 1200); } catch (e) {}
 })();true;`;
 
+function buildAccessibilityModeScript(initialEnabled?: boolean): string {
+  const initialValue = typeof initialEnabled === 'boolean' ? JSON.stringify(initialEnabled) : 'null';
+  const safeFontScale = Math.min(Math.max(PixelRatio.getFontScale(), 1), 1.2);
+  const safeTextAdjustPercent = Platform.OS === 'android' ? 100 : Math.round(safeFontScale * 100);
+
+  return `(function(){
+  try {
+    var key = 'withart-large-text-mode';
+    var initialEnabled = ${initialValue};
+    var safeFontScale = ${JSON.stringify(safeFontScale)};
+    var safeTextAdjust = ${JSON.stringify(`${safeTextAdjustPercent}%`)};
+    function readEnabled() {
+      try { return localStorage.getItem(key) === 'true'; } catch (e) { return false; }
+    }
+    function apply(enabled) {
+      try {
+        document.documentElement.classList.toggle('withart-large-text', !!enabled);
+        document.documentElement.setAttribute('data-large-text', enabled ? 'true' : 'false');
+        document.documentElement.style.setProperty('--withart-system-font-scale', String(safeFontScale));
+        document.documentElement.style.setProperty('--withart-system-text-adjust', safeTextAdjust);
+        document.documentElement.style.webkitTextSizeAdjust = safeTextAdjust;
+        document.documentElement.style.textSizeAdjust = safeTextAdjust;
+        if (document.body) {
+          document.body.style.webkitTextSizeAdjust = safeTextAdjust;
+          document.body.style.textSizeAdjust = safeTextAdjust;
+        }
+      } catch (e) {}
+    }
+    window.__WITHART_SET_LARGE_TEXT_MODE = function(enabled) {
+      try { localStorage.setItem(key, enabled ? 'true' : 'false'); } catch (e) {}
+      apply(!!enabled);
+      try { window.dispatchEvent(new CustomEvent('WITHART_LARGE_TEXT_MODE_CHANGED', { detail: { enabled: !!enabled, fontScale: safeFontScale } })); } catch (e) {}
+      try { window.dispatchEvent(new Event('storage')); } catch (e) {}
+    };
+    if (typeof initialEnabled === 'boolean') {
+      try { localStorage.setItem(key, initialEnabled ? 'true' : 'false'); } catch (e) {}
+      apply(initialEnabled);
+    } else {
+      apply(readEnabled());
+    }
+  } catch (e) {}
+})();true;`;
+}
+
 type Props = {
   url: string;
   name?: string;
@@ -429,6 +475,7 @@ type Props = {
   onPathChange?: (pathname: string) => void;
   onReady?: () => void;
   deferInitialLoad?: boolean;
+  largeTextModeEnabled?: boolean;
 };
 
 const LOGIN_PATH_PREFIXES = ['/login', '/auth'];
@@ -674,8 +721,26 @@ function getOwnerNameForPath(pathname?: string, currentOwner?: string): string {
   return 'main';
 }
 
-export default function WebViewScreen({ url, name, targetPath = '/', authPayload, onCustomMessage, onPathChange, onReady, deferInitialLoad = true }: Props) {
+export default function WebViewScreen({ url, name, targetPath = '/', authPayload, onCustomMessage, onPathChange, onReady, deferInitialLoad = true, largeTextModeEnabled }: Props) {
   const webViewRef = useRef<WebView>(null);
+  const insets = useSafeAreaInsets();
+  const systemTextZoom = React.useMemo(
+    () => Math.round(Math.min(Math.max(PixelRatio.getFontScale(), 1), 1.2) * 100),
+    [],
+  );
+  const nativeViewportScript = React.useMemo(
+    () =>
+      buildNativeViewportScript({
+        top: insets.top,
+        right: insets.right,
+        bottom: insets.bottom,
+        left: insets.left,
+        platform: Platform.OS,
+        consumeBottomInset: Platform.OS === 'android',
+      }),
+    [insets.bottom, insets.left, insets.right, insets.top],
+  );
+  const androidSystemBottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, 0) : 0;
   const shouldDeferInitialLoad = deferInitialLoad && !!name && name !== 'main';
   const [sourceUri, setSourceUri] = React.useState(shouldDeferInitialLoad ? 'about:blank' : url);
   const sourceUriRef = useRef(sourceUri);
@@ -859,6 +924,23 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
     } catch (_) {}
   }, [name, targetPath]);
 
+  const injectAccessibilityMode = useCallback((enabled?: boolean) => {
+    try {
+      if (sourceUriRef.current === 'about:blank') return;
+      webViewRef.current?.injectJavaScript(buildAccessibilityModeScript(enabled));
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    injectAccessibilityMode(largeTextModeEnabled);
+  }, [injectAccessibilityMode, largeTextModeEnabled]);
+
+  useEffect(() => {
+    try {
+      webViewRef.current?.injectJavaScript(nativeViewportScript);
+    } catch (_) {}
+  }, [nativeViewportScript]);
+
   // ✅ 3. useEffect (registry 등록)
   useEffect(() => {
     if (!name) return;
@@ -987,6 +1069,9 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
       try {
         const msg = JSON.parse(event.nativeEvent.data);
         if (!msg?.type) return;
+        if (name && typeof msg === 'object') {
+          msg.webviewName = name;
+        }
 
         if (
           (msg.type === 'SET_BOTTOM_NAV_VISIBLE' || msg.type === 'SET_TABS_VISIBILITY') &&
@@ -1100,6 +1185,7 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
 
   const handleLoadEnd = useCallback(async () => {
     if (sourceUriRef.current === 'about:blank') return;
+    injectAccessibilityMode(largeTextModeEnabled);
     await injectAuth();
 
     if (!readySentRef.current) {
@@ -1112,10 +1198,15 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
     if (name !== 'main') {
       setIsWebviewReady(true);
     }
-  }, [injectAuth, name, setIsWebviewReady, onReady, onCustomMessage]);
+  }, [injectAccessibilityMode, injectAuth, largeTextModeEnabled, name, setIsWebviewReady, onReady, onCustomMessage]);
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        androidSystemBottomInset > 0 && { paddingBottom: androidSystemBottomInset },
+      ]}
+    >
       <WebView
         ref={webViewRef}
         source={{ uri: sourceUri }}
@@ -1125,9 +1216,9 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         onLoadEnd={handleLoadEnd}
         onNavigationStateChange={handleNavChange}
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
-        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
+        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${nativeViewportScript}\n;${buildAccessibilityModeScript(largeTextModeEnabled)}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
-        injectedJavaScript={`${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
+        injectedJavaScript={`${nativeViewportScript}\n;${buildAccessibilityModeScript(largeTextModeEnabled)}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         onError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;
           console.error('[WebView Error]', nativeEvent.description);
@@ -1143,6 +1234,7 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         thirdPartyCookiesEnabled
         javaScriptEnabled
         domStorageEnabled
+        textZoom={systemTextZoom}
         geolocationEnabled
         originWhitelist={['*']}
         mixedContentMode="always"

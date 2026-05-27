@@ -1,5 +1,6 @@
 import { registerRootComponent } from 'expo';
 
+import './src/lib/disableFontScaling';
 import AppWrapper from './AppWrapper';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

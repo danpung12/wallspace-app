@@ -2,7 +2,7 @@
   "expo": {
     "name": "WithArt",
     "slug": "withart-new",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/logo3.png",
     "userInterfaceStyle": "light",
@@ -29,7 +29,7 @@
     },
     "android": {
       "package": "com.withart.service",
-      "versionCode": 8,
+      "versionCode": 9,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
@@ -45,12 +45,7 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "3c8f8e8a-dc1e-49ba-9c17-acb29407c2c8"
-      }
-    },
-    "owner": "leeeunchong",
+    "owner": "danpung12",
     "plugins": [
       "expo-secure-store",
       [
@@ -64,6 +59,11 @@
       "expo-asset",
       "expo-font"
     ],
-    "scheme": "withart"
+    "scheme": "withart",
+    "extra": {
+      "eas": {
+        "projectId": "072a27e6-fa31-4d20-8729-46fd7acb2635"
+      }
+    }
   }
 }

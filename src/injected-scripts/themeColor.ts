@@ -168,7 +168,28 @@ export const THEME_COLOR_SCRIPT = `
     return '#ffffff';
   }
 
+  function getExplicitThemeColor() {
+    try {
+      var root = document.documentElement;
+      if (!root) return null;
+      var direct = root.getAttribute('data-withart-theme-color');
+      if (direct && direct.trim()) return direct.trim();
+      var computed = window.getComputedStyle(root).getPropertyValue('--withart-header-theme-color');
+      if (computed && computed.trim()) return computed.trim();
+    } catch (e) {}
+    return null;
+  }
+
   function detectColor() {
+    var explicitColor = getExplicitThemeColor();
+    if (explicitColor) {
+      if (explicitColor !== lastColor) {
+        lastColor = explicitColor;
+        postColor(explicitColor);
+      }
+      return;
+    }
+
     var probeX = Math.max(1, Math.floor(window.innerWidth / 2));
     var probeY = 1;
     var target = document.elementFromPoint(probeX, probeY);

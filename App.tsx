@@ -40,6 +40,7 @@ import WebViewScreen from './src/screens/WebViewScreen';
 import AnimatedTabBar from './src/components/AnimatedTabBar';
 import { handleSocialLogin, getCurrentSession } from './src/lib/socialLogin';
 import { RN_WEBVIEW_PRE_INJECT } from './src/injected-scripts/preInject';
+import { buildNativeViewportScript } from './src/injected-scripts/nativeViewport';
 import { THEME_COLOR_SCRIPT } from './src/injected-scripts/themeColor';
 import { webviewControllerRegistry } from './src/lib/webviewController';
 import { useAuthFlowStore } from './src/store/authFlowStore';
@@ -55,6 +56,8 @@ import {
 const BASE_WEB_URL = 'https://withart.vercel.app';
 const WEBVIEW_READY_REVEAL_DELAY_MS = 350;
 const EAS_PROJECT_ID = '3c8f8e8a-dc1e-49ba-9c17-acb29407c2c8';
+const LARGE_TEXT_MODE_KEY = 'withartLargeTextMode';
+const LARGE_TEXT_PROMPT_SEEN_KEY = 'withartLargeTextPromptSeen';
 const { WithartLocation } = NativeModules as {
   WithartLocation?: {
     getNetworkLastKnownLocation: () => Promise<{
@@ -177,6 +180,28 @@ function shouldHideBottomNavForPath(pathnameWithSearch?: string): boolean {
   return BOTTOM_NAV_HIDDEN_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
+}
+
+function normalizeNativePathname(pathnameWithSearch?: string): string {
+  if (!pathnameWithSearch) return '/';
+  const rawPathname = pathnameWithSearch.split(/[?#]/)[0] || '/';
+  return rawPathname !== '/' && rawPathname.endsWith('/') ? rawPathname.slice(0, -1) : rawPathname;
+}
+
+function getScrollableRootTabForPath(pathnameWithSearch?: string): '홈' | '대시보드' | '내 정보' | null {
+  const pathname = normalizeNativePathname(pathnameWithSearch);
+  if (pathname === '/') return '홈';
+  if (pathname === '/dashboard') return '대시보드';
+  if (pathname === '/profile') return '내 정보';
+  return null;
+}
+
+function getTabNameForWebView(webviewName?: string): '홈' | '예약' | '대시보드' | '내 정보' | null {
+  if (webviewName === 'main') return '홈';
+  if (webviewName === 'map') return '예약';
+  if (webviewName === 'dashboard') return '대시보드';
+  if (webviewName === 'profile') return '내 정보';
+  return null;
 }
 
 function getNotificationNavigationPath(data?: Record<string, unknown> | null): string | null {
@@ -850,6 +875,19 @@ function WebOverlay({
   const webOverlayRef = useRef<WebView>(null);
   const insets = useSafeAreaInsets();
   const shouldFitFullscreen = url.includes('/select-type');
+  const nativeViewportScript = React.useMemo(
+    () =>
+      buildNativeViewportScript({
+        top: insets.top,
+        right: insets.right,
+        bottom: insets.bottom,
+        left: insets.left,
+        platform: Platform.OS,
+        consumeBottomInset: Platform.OS === 'android',
+      }),
+    [insets.bottom, insets.left, insets.right, insets.top],
+  );
+  const androidSystemBottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, 0) : 0;
 
   const ensureRedirectFromLogin = useCallback((targetUrl?: string) => {
     try {
@@ -980,7 +1018,12 @@ function WebOverlay({
 
   return (
     <View style={[styles.overlay, { zIndex: 200 }]}>
-      <View style={{ flex: 1 }}>
+      <View
+        style={[
+          { flex: 1 },
+          androidSystemBottomInset > 0 && { paddingBottom: androidSystemBottomInset },
+        ]}
+      >
         {showHeader && (
           <View style={[styles.webOverlayHeader, { height: 52 + insets.top, paddingTop: insets.top }]}>
             <Pressable onPress={onClose} style={styles.closeBtn}>
@@ -1004,9 +1047,9 @@ function WebOverlay({
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           originWhitelist={['*']}
-          injectedJavaScriptBeforeContentLoaded={`${RN_WEBVIEW_PRE_INJECT}\n;${shouldFitFullscreen ? FULLSCREEN_WEB_OVERLAY_SCRIPT : ''}`}
+          injectedJavaScriptBeforeContentLoaded={`${RN_WEBVIEW_PRE_INJECT}\n;${nativeViewportScript}\n;${shouldFitFullscreen ? FULLSCREEN_WEB_OVERLAY_SCRIPT : ''}`}
           injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
-          injectedJavaScript={`${shouldFitFullscreen ? FULLSCREEN_WEB_OVERLAY_SCRIPT : ''}\n;${THEME_COLOR_SCRIPT}`}
+          injectedJavaScript={`${nativeViewportScript}\n;${shouldFitFullscreen ? FULLSCREEN_WEB_OVERLAY_SCRIPT : ''}\n;${THEME_COLOR_SCRIPT}`}
           userAgent="Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         />
       </View>
@@ -1048,6 +1091,8 @@ export default function App({ onLoggedInChange }: AppProps) {
   const [mainContentReady, setMainContentReady] = useState(false);
   const [emailLoginNonce, setEmailLoginNonce] = useState(0);
   const [mainWebViewNonce, setMainWebViewNonce] = useState(0);
+  const [largeTextModeEnabled, setLargeTextModeEnabled] = useState(false);
+  const [showLargeTextPrompt, setShowLargeTextPrompt] = useState(false);
   const ignoreMapNavigationUntilRef = useRef(0);
   const routeBottomNavVisibleRef = useRef(true);
   const contentBottomNavVisibleRef = useRef(true);
@@ -1058,6 +1103,7 @@ export default function App({ onLoggedInChange }: AppProps) {
   const authHydrationPending = useAuthFlowStore((s) => s.authHydrationPending);
   const setAuthHydrationPending = useAuthFlowStore((s) => s.setAuthHydrationPending);
   const setNavTransitionPending = useAuthFlowStore((s) => s.setNavTransitionPending);
+  const rootInsets = useSafeAreaInsets();
 
   const isAppContentReady =
     isLoggedIn &&
@@ -1077,6 +1123,7 @@ export default function App({ onLoggedInChange }: AppProps) {
     activeTabName === '대시보드' &&
     (dashboardPathname === '/dashboard/add-store' || dashboardPathname.startsWith('/dashboard/add-store/'));
   const nativeShellBackground = nativeShellBackgroundOverride ?? (isAddStoreActive ? '#FFFFFF' : '#e8e3da');
+  const androidRootBottomInset = Platform.OS === 'android' ? Math.max(rootInsets.bottom, 0) : 0;
 
   const applyContentBottomNavVisible = useCallback((nextVisible: boolean) => {
     if (contentBottomNavShowTimerRef.current) {
@@ -1105,6 +1152,16 @@ export default function App({ onLoggedInChange }: AppProps) {
     const nextVisible = data?.visible !== false;
     const messagePathname = typeof data?.pathname === 'string' ? data.pathname : undefined;
 
+    if (type === 'SET_CONTENT_BOTTOM_NAV_VISIBLE') {
+      const targetTab = getScrollableRootTabForPath(messagePathname);
+      if (targetTab && targetTab === activeTabName && !shouldHideBottomNavForPath(messagePathname)) {
+        applyContentBottomNavVisible(nextVisible);
+      } else {
+        applyContentBottomNavVisible(true);
+      }
+      return;
+    }
+
     if (type === 'SET_TABS_VISIBILITY') {
       routeBottomNavVisibleRef.current = nextVisible;
       setRouteBottomNavVisible(nextVisible);
@@ -1131,12 +1188,17 @@ export default function App({ onLoggedInChange }: AppProps) {
     routeBottomNavVisibleRef.current = nextVisible;
     setRouteBottomNavVisible(nextVisible);
     applyContentBottomNavVisible(nextVisible);
-  }, [applyContentBottomNavVisible]);
+  }, [activeTabName, applyContentBottomNavVisible]);
 
   const handleNativeShellBackgroundMessage = useCallback((type: string, data?: any) => {
-    if (type !== 'SET_NATIVE_SHELL_BACKGROUND') return false;
+    if (type !== 'SET_NATIVE_SHELL_BACKGROUND' && type !== 'SET_THEME_COLOR') return false;
 
-    if (data?.active && typeof data?.color === 'string') {
+    if (type === 'SET_THEME_COLOR') {
+      const sourceTab = getTabNameForWebView(typeof data?.webviewName === 'string' ? data.webviewName : undefined);
+      if (sourceTab && sourceTab !== activeTabName) return true;
+    }
+
+    if (typeof data?.color === 'string' && (type === 'SET_THEME_COLOR' || data?.active)) {
       setNativeShellBackgroundOverride(data.color);
     } else {
       setNativeShellBackgroundOverride(null);
@@ -1147,7 +1209,7 @@ export default function App({ onLoggedInChange }: AppProps) {
     }
 
     return true;
-  }, []);
+  }, [activeTabName]);
 
   const handleUserModeChangedMessage = useCallback((type: string, data?: any) => {
     if (type !== 'USER_MODE_CHANGED') return false;
@@ -1173,11 +1235,48 @@ export default function App({ onLoggedInChange }: AppProps) {
     return true;
   }, []);
 
+  const broadcastLargeTextMode = useCallback((enabled: boolean) => {
+    const script = `(function(){
+      try {
+        var enabled = ${JSON.stringify(enabled)};
+        try { localStorage.setItem('withart-large-text-mode', enabled ? 'true' : 'false'); } catch (e) {}
+        try {
+          document.documentElement.classList.toggle('withart-large-text', enabled);
+          document.documentElement.setAttribute('data-large-text', enabled ? 'true' : 'false');
+        } catch (e) {}
+        try {
+          if (typeof window.__WITHART_SET_LARGE_TEXT_MODE === 'function') {
+            window.__WITHART_SET_LARGE_TEXT_MODE(enabled);
+          }
+        } catch (e) {}
+        try {
+          window.dispatchEvent(new CustomEvent('WITHART_LARGE_TEXT_MODE_CHANGED', { detail: { enabled: enabled } }));
+        } catch (e) {}
+        try { window.dispatchEvent(new Event('storage')); } catch (e) {}
+      } catch (e) {}
+    })();true;`;
+
+    webviewControllerRegistry.callAll('injectJavaScript', script);
+  }, []);
+
+  const handleLargeTextModeMessage = useCallback((type: string, data?: any) => {
+    if (type !== 'SET_LARGE_TEXT_MODE') return false;
+    const enabled = data?.enabled === true;
+
+    setLargeTextModeEnabled(enabled);
+    SecureStore.setItemAsync(LARGE_TEXT_MODE_KEY, enabled ? 'true' : 'false').catch(() => {});
+    SecureStore.setItemAsync(LARGE_TEXT_PROMPT_SEEN_KEY, 'true').catch(() => {});
+    setShowLargeTextPrompt(false);
+    broadcastLargeTextMode(enabled);
+    return true;
+  }, [broadcastLargeTextMode]);
+
   const handleSharedWebViewMessage = useCallback((type: string, data?: any) => {
     if (handleNativeShellBackgroundMessage(type, data)) return true;
     if (handleUserModeChangedMessage(type, data)) return true;
+    if (handleLargeTextModeMessage(type, data)) return true;
     return false;
-  }, [handleNativeShellBackgroundMessage, handleUserModeChangedMessage]);
+  }, [handleLargeTextModeMessage, handleNativeShellBackgroundMessage, handleUserModeChangedMessage]);
 
   const broadcastNativeLocation = useCallback((location: Location.LocationObject) => {
     const payload = {
@@ -1205,6 +1304,72 @@ export default function App({ onLoggedInChange }: AppProps) {
       }
     }
   }, [isAppContentReady]);
+
+  useEffect(() => {
+    const currentPathname =
+      activeTabName === '홈'
+        ? mainPathname || '/'
+        : activeTabName === '대시보드'
+          ? dashboardPathname || '/dashboard'
+          : activeTabName === '내 정보'
+            ? '/profile'
+            : mapPathname || '/map';
+
+    const targetTab = getScrollableRootTabForPath(currentPathname);
+    if (targetTab !== activeTabName || shouldHideBottomNavForPath(currentPathname)) {
+      applyContentBottomNavVisible(true);
+    }
+  }, [activeTabName, applyContentBottomNavVisible, dashboardPathname, mainPathname, mapPathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let promptTimer: ReturnType<typeof setTimeout> | null = null;
+
+    (async () => {
+      try {
+        const [storedMode, promptSeen] = await Promise.all([
+          SecureStore.getItemAsync(LARGE_TEXT_MODE_KEY),
+          SecureStore.getItemAsync(LARGE_TEXT_PROMPT_SEEN_KEY),
+        ]);
+        if (cancelled) return;
+        const enabled = storedMode === 'true';
+        setLargeTextModeEnabled(enabled);
+        if (isAppContentReady) {
+          broadcastLargeTextMode(enabled);
+          if (!promptSeen && !enabled) {
+            promptTimer = setTimeout(() => {
+              if (!cancelled) setShowLargeTextPrompt(true);
+            }, 900);
+          }
+        }
+      } catch (_) {}
+    })();
+
+    return () => {
+      cancelled = true;
+      if (promptTimer) {
+        clearTimeout(promptTimer);
+      }
+    };
+  }, [broadcastLargeTextMode, isAppContentReady]);
+
+  const enableLargeTextModeFromPrompt = useCallback(() => {
+    setLargeTextModeEnabled(true);
+    setShowLargeTextPrompt(false);
+    SecureStore.setItemAsync(LARGE_TEXT_MODE_KEY, 'true').catch(() => {});
+    SecureStore.setItemAsync(LARGE_TEXT_PROMPT_SEEN_KEY, 'true').catch(() => {});
+    broadcastLargeTextMode(true);
+  }, [broadcastLargeTextMode]);
+
+  const dismissLargeTextPrompt = useCallback(() => {
+    setShowLargeTextPrompt(false);
+    SecureStore.setItemAsync(LARGE_TEXT_PROMPT_SEEN_KEY, 'true').catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!isAppContentReady) return;
+    broadcastLargeTextMode(largeTextModeEnabled);
+  }, [activeTabName, broadcastLargeTextMode, isAppContentReady, largeTextModeEnabled]);
 
   useEffect(() => {
     return () => {
@@ -1921,6 +2086,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                         name="main"
                         targetPath={mainPathname || '/'}
                         authPayload={webviewAuthPayload}
+                        largeTextModeEnabled={largeTextModeEnabled}
                         onPathChange={(pathname) => {
                           const heldNotificationPath = notificationNavigationHoldRef.current;
                           if (
@@ -1995,7 +2161,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                             return;
                           }
 
-                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
+                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY' || type === 'SET_CONTENT_BOTTOM_NAV_VISIBLE') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
                           }
@@ -2019,6 +2185,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                         name="map"
                         targetPath={mapPathname || '/map'}
                         authPayload={webviewAuthPayload}
+                        largeTextModeEnabled={largeTextModeEnabled}
                         onPathChange={(pathname) => {
                           setMapPathname((prev) => (prev === pathname ? prev : pathname));
                         }}
@@ -2036,7 +2203,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                             return;
                           }
 
-                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
+                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY' || type === 'SET_CONTENT_BOTTOM_NAV_VISIBLE') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
                           }
@@ -2060,6 +2227,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                         name="dashboard"
                         targetPath={dashboardPathname || '/dashboard'}
                         authPayload={webviewAuthPayload}
+                        largeTextModeEnabled={largeTextModeEnabled}
                         onPathChange={(pathname) => {
                           setDashboardPathname((prev) => (prev === pathname ? prev : pathname));
                         }}
@@ -2068,7 +2236,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                             return;
                           }
 
-                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
+                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY' || type === 'SET_CONTENT_BOTTOM_NAV_VISIBLE') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
                           }
@@ -2092,12 +2260,13 @@ export default function App({ onLoggedInChange }: AppProps) {
                         name="profile"
                         targetPath="/profile"
                         authPayload={webviewAuthPayload}
+                        largeTextModeEnabled={largeTextModeEnabled}
                         onCustomMessage={(type, data) => {
                           if (handleSharedWebViewMessage(type, data)) {
                             return;
                           }
 
-                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY') {
+                          if (type === 'SET_BOTTOM_NAV_VISIBLE' || type === 'SET_TABS_VISIBILITY' || type === 'SET_CONTENT_BOTTOM_NAV_VISIBLE') {
                             handleBottomNavVisibilityMessage(type, data);
                             return;
                           }
@@ -2160,6 +2329,7 @@ export default function App({ onLoggedInChange }: AppProps) {
               <View
                 style={[
                   styles.tabNavigatorLayer,
+                  androidRootBottomInset > 0 && { height: 80 + androidRootBottomInset },
                 ]}
                 pointerEvents={isAppContentReady && isBottomNavVisible ? 'box-none' : 'none'}
               >
@@ -2351,6 +2521,39 @@ export default function App({ onLoggedInChange }: AppProps) {
 
             {/* 하드 가드: 소셜/하이드레이션 진행 중에는 어떤 웹 화면도 노출하지 않음 */}
             {(authHydrationPending || isLoggingIn || forceTopLoadingOverlay) && <LoadingOverlay opaque />}
+
+            {showLargeTextPrompt && isAppContentReady && !largeTextModeEnabled && (
+              <View pointerEvents="box-none" style={styles.largeTextPromptLayer}>
+                <View style={styles.largeTextPromptCard}>
+                  <View style={styles.largeTextPromptIcon}>
+                    <Text style={styles.largeTextPromptIconText}>Aa</Text>
+                  </View>
+                  <View style={styles.largeTextPromptCopy}>
+                    <Text style={styles.largeTextPromptTitle}>큰 글자 모드를 켜시겠습니까?</Text>
+                    <Text style={styles.largeTextPromptMessage} numberOfLines={2}>
+                      글씨와 버튼 터치 영역을 보기 편하게 살짝 키웁니다.
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="큰 글자 모드 켜기"
+                    style={styles.largeTextPromptPrimary}
+                    onPress={enableLargeTextModeFromPrompt}
+                  >
+                    <Text style={styles.largeTextPromptPrimaryText}>켜기</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="큰 글자 모드 안내 닫기"
+                    style={styles.largeTextPromptClose}
+                    onPress={dismissLargeTextPrompt}
+                    hitSlop={10}
+                  >
+                    <Text style={styles.largeTextPromptCloseText}>×</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
 
             {webOverlayUrl && (
               <WebOverlay
@@ -2602,6 +2805,91 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#3A2F24',
     marginBottom: 8,
+  },
+  largeTextPromptLayer: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 98,
+    zIndex: 180,
+    elevation: 180,
+  },
+  largeTextPromptCard: {
+    minHeight: 72,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(193, 154, 107, 0.22)',
+    paddingVertical: 12,
+    paddingLeft: 13,
+    paddingRight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    shadowColor: '#3D2C1D',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  largeTextPromptIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: '#F4E8DA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  largeTextPromptIconText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#8B6B3F',
+  },
+  largeTextPromptCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  largeTextPromptTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#3D2C1D',
+  },
+  largeTextPromptMessage: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#8B7355',
+  },
+  largeTextPromptPrimary: {
+    minWidth: 54,
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#3D2C1D',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  largeTextPromptPrimaryText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  largeTextPromptClose: {
+    position: 'absolute',
+    top: 7,
+    right: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  largeTextPromptCloseText: {
+    fontSize: 22,
+    lineHeight: 24,
+    fontWeight: '500',
+    color: '#A89587',
   },
   errorMsg: {
     fontSize: 14,

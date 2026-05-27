@@ -54,9 +54,10 @@ export const RN_WEBVIEW_PRE_INJECT = `
             if (inline && inline.length){
               var lower = inline.toLowerCase();
               var shouldFix = lower.indexOf('var(--bottom-nav-h') !== -1 || lower.indexOf('var(--booking-footer-h') !== -1;
+              var hasNativeInset = lower.indexOf('--withart-native-bottom-inset') !== -1 || lower.indexOf('--withart-native-safe-area-bottom') !== -1 || lower.indexOf('--safe-area-bottom') !== -1;
               var computed = 0;
               try { computed = parseFloat(window.getComputedStyle(el).paddingBottom) || 0; } catch(e){}
-              if (shouldFix || computed >= 48){
+              if (!hasNativeInset && (shouldFix || computed >= 48)){
                 el.style.paddingBottom = 'env(safe-area-inset-bottom, 0px)';
                 el.style.marginBottom = '0px';
                 reports.push({ tag: el.tagName, inline: inline, computedBefore: computed });
@@ -405,6 +406,157 @@ export const RN_WEBVIEW_PRE_INJECT = `
     try { var __origReplace = history.replaceState; history.replaceState = function() { try { if (__shouldNativeOwnNavigation(arguments[2])) { var p = __normalizeNativePath(arguments[2]); __postNativeMessage({ type: 'NAVIGATE_TAB', pathname: p }); try { window.__RN_NAV_ACK = true; } catch(e){} return; } } catch(e){} var r = __origReplace.apply(this, arguments); try { __postActiveTabIfChanged(); } catch(e){} return r; }; } catch(e){}
     try { window.addEventListener('popstate', __postActiveTabIfChanged); } catch(e){}
     try { setInterval(__postActiveTabIfChanged, 1500); } catch(e){}
+
+    try {
+      var __withartLastScrollY = 0;
+      var __withartLastScrollNavVisible = true;
+      var __withartLastScrollPostAt = 0;
+      var __withartScrollTicking = false;
+      var __withartLastScrollTarget = null;
+      var __withartBoundScrollNodes = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+      function __withartIsScrollableNode(node) {
+        try {
+          if (!node || node === window || node === document || node.nodeType !== 1) return false;
+          var style = window.getComputedStyle(node);
+          var overflowY = style ? style.overflowY : '';
+          var canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+          return canScroll && node.scrollHeight > node.clientHeight + 8;
+        } catch(e) {
+          return false;
+        }
+      }
+      function __withartGetScrollableAncestor(node) {
+        try {
+          var current = node && node.nodeType === 1 ? node : null;
+          while (current && current !== document.body && current !== document.documentElement) {
+            if (__withartIsScrollableNode(current)) return current;
+            current = current.parentElement;
+          }
+        } catch(e) {}
+        return node;
+      }
+      function __withartNodeScrollTop(node) {
+        try {
+          if (!node) return 0;
+          if (node === window) return Math.max(0, window.scrollY || 0);
+          if (node === document) node = document.scrollingElement || document.documentElement;
+          return Math.max(0, node.scrollTop || 0);
+        } catch(e) {
+          return 0;
+        }
+      }
+      function __withartGetScrollY() {
+        try {
+          var y = Math.max(
+            0,
+            window.scrollY || 0,
+            (document.scrollingElement && document.scrollingElement.scrollTop) || 0,
+            document.documentElement.scrollTop || 0,
+            document.body.scrollTop || 0
+          );
+          var target = __withartLastScrollTarget;
+          if (target && target !== window && target !== document) {
+            target = __withartGetScrollableAncestor(target);
+            var targetY = __withartNodeScrollTop(target);
+            if (targetY > y) y = targetY;
+          }
+          var nodes = document.querySelectorAll('main, [data-rn-keep-bottom-padding], .dashboard-mobile-upgrade, .page-home-root, .overflow-y-auto, .overflow-auto, [style*="overflow-y"], [style*="overflow:"]');
+          for (var i = 0; i < nodes.length; i += 1) {
+            var node = nodes[i];
+            if (!__withartIsScrollableNode(node)) continue;
+            var nodeY = __withartNodeScrollTop(node);
+            if (nodeY > y) y = nodeY;
+          }
+          return y;
+        } catch(e) {
+          return 0;
+        }
+      }
+      function __withartNormalizeScrollPath() {
+        try {
+          var p = (location && location.pathname) ? location.pathname : '/';
+          return p && p !== '/' && p.endsWith('/') ? p.slice(0, -1) : p || '/';
+        } catch(e) {
+          return '/';
+        }
+      }
+      function __withartCanAutoHideBottomNav(path) {
+        return path === '/' || path === '/dashboard' || path === '/profile';
+      }
+      function __withartPostScrollNavVisible(visible, path) {
+        try {
+          var now = Date.now ? Date.now() : new Date().getTime();
+          if (__withartLastScrollNavVisible === visible && now - __withartLastScrollPostAt < 600) return;
+          __withartLastScrollNavVisible = visible;
+          __withartLastScrollPostAt = now;
+          __postNativeMessage({
+            type: 'SET_CONTENT_BOTTOM_NAV_VISIBLE',
+            visible: visible,
+            pathname: path,
+            source: 'scroll'
+          });
+        } catch(e) {}
+      }
+      function __withartUpdateScrollNav(fromUserScroll) {
+        try {
+          __withartScrollTicking = false;
+          var path = __withartNormalizeScrollPath();
+          if (!__withartCanAutoHideBottomNav(path)) {
+            __withartLastScrollY = __withartGetScrollY();
+            __withartPostScrollNavVisible(true, path);
+            return;
+          }
+
+          var y = __withartGetScrollY();
+          var delta = y - __withartLastScrollY;
+          if (y < 24) {
+            __withartPostScrollNavVisible(true, path);
+          } else if (fromUserScroll && delta > 8 && y > 56) {
+            __withartPostScrollNavVisible(false, path);
+          } else if (fromUserScroll && delta < -6) {
+            __withartPostScrollNavVisible(true, path);
+          }
+          __withartLastScrollY = y;
+        } catch(e) {
+          __withartScrollTicking = false;
+        }
+      }
+      function __withartQueueScrollNavUpdate(event) {
+        try {
+          try { if (event && event.target) __withartLastScrollTarget = __withartGetScrollableAncestor(event.target); } catch(_) {}
+          if (__withartScrollTicking) return;
+          __withartScrollTicking = true;
+          if (window.requestAnimationFrame) {
+            window.requestAnimationFrame(function(){ __withartUpdateScrollNav(true); });
+          } else {
+            setTimeout(function(){ __withartUpdateScrollNav(true); }, 16);
+          }
+        } catch(e) {}
+      }
+      function __withartBindKnownScrollContainers() {
+        try {
+          var nodes = document.querySelectorAll('main, [data-rn-keep-bottom-padding], .dashboard-mobile-upgrade, .page-home-root, .overflow-y-auto, .overflow-auto, [style*="overflow-y"], [style*="overflow:"]');
+          for (var i = 0; i < nodes.length; i += 1) {
+            var node = nodes[i];
+            if (!__withartIsScrollableNode(node)) continue;
+            if (__withartBoundScrollNodes && __withartBoundScrollNodes.has(node)) continue;
+            try { if (__withartBoundScrollNodes) __withartBoundScrollNodes.add(node); } catch(_) {}
+            try { node.addEventListener('scroll', __withartQueueScrollNavUpdate, { passive: true }); } catch(e) {
+              try { node.addEventListener('scroll', __withartQueueScrollNavUpdate); } catch(_) {}
+            }
+          }
+        } catch(e) {}
+      }
+      try { window.addEventListener('scroll', __withartQueueScrollNavUpdate, { passive: true }); } catch(e) {
+        try { window.addEventListener('scroll', __withartQueueScrollNavUpdate); } catch(_) {}
+      }
+      try { document.addEventListener('scroll', __withartQueueScrollNavUpdate, true); } catch(e) {}
+      try { window.addEventListener('popstate', function(){ setTimeout(function(){ __withartUpdateScrollNav(false); }, 80); }); } catch(e) {}
+      try { __withartBindKnownScrollContainers(); } catch(e) {}
+      try { setInterval(__withartBindKnownScrollContainers, 1200); } catch(e) {}
+      try { __withartLastScrollY = __withartGetScrollY(); } catch(e) {}
+      try { __withartUpdateScrollNav(false); } catch(e) {}
+    } catch(e) {}
   } catch(e){}
 })(); true;
 `;
