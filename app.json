@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "위드아트(withart)",
+    "name": "WithArt",
     "slug": "withart-new",
-    "version": "1.0.9",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/logo3.png",
     "userInterfaceStyle": "light",
@@ -29,7 +29,7 @@
     },
     "android": {
       "package": "com.withart.service",
-      "versionCode": 6,
+      "versionCode": 8,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",

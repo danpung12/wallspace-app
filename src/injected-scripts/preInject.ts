@@ -215,23 +215,43 @@ export const RN_WEBVIEW_PRE_INJECT = `
         return '';
       }
     }
-    function __withartGoBackOrHome() {
+    function __withartGoBackOrFallback() {
       try {
-        var handledByNext = false;
+        var fallbackPath = '/dashboard';
         try {
-          if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
-            window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = true;
-            window.__WITHART_HANDLE_NATIVE_NAV('/');
-            handledByNext = true;
-          }
+          var params = new URLSearchParams(window.location.search || '');
+          var returnTo = params.get('returnTo');
+          if (returnTo && returnTo.charAt(0) === '/') fallbackPath = returnTo;
         } catch(e) {}
-        __withartPostNative({ type: 'NAVIGATE_TAB', pathname: '/' });
-        if (handledByNext) {
+        if (window.history && window.history.length > 1) {
+          window.history.back();
+          setTimeout(function(){
+            try {
+              if ((window.location.pathname || '') !== '/exhibition-detail') return;
+              if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+                window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = true;
+                window.__WITHART_HANDLE_NATIVE_NAV(fallbackPath);
+                setTimeout(function(){
+                  try { window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = false; } catch(e) {}
+                }, 120);
+              } else {
+                window.location.href = fallbackPath;
+              }
+              __withartPostNative({ type: 'NAVIGATE_TAB', pathname: fallbackPath });
+            } catch(e) {}
+          }, 350);
+          return;
+        }
+        if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+          window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = true;
+          window.__WITHART_HANDLE_NATIVE_NAV(fallbackPath);
           setTimeout(function(){
             try { window.__WITHART_NATIVE_NAV_IN_PROGRESS__ = false; } catch(e) {}
           }, 120);
-          return;
+        } else {
+          window.location.href = fallbackPath;
         }
+        __withartPostNative({ type: 'NAVIGATE_TAB', pathname: fallbackPath });
       } catch(e) {}
     }
     function __withartInstallExhibitionBackBridge() {
@@ -267,7 +287,7 @@ export const RN_WEBVIEW_PRE_INJECT = `
             if (typeof event.stopImmediatePropagation === 'function') {
               event.stopImmediatePropagation();
             }
-            __withartGoBackOrHome();
+            __withartGoBackOrFallback();
           } catch(e) {}
         }, true);
       } catch(e) {}

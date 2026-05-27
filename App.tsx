@@ -17,6 +17,7 @@ import {
   Animated,
   Easing,
   PermissionsAndroid,
+  NativeModules,
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -54,6 +55,18 @@ import {
 const BASE_WEB_URL = 'https://withart.vercel.app';
 const WEBVIEW_READY_REVEAL_DELAY_MS = 350;
 const EAS_PROJECT_ID = '3c8f8e8a-dc1e-49ba-9c17-acb29407c2c8';
+const { WithartLocation } = NativeModules as {
+  WithartLocation?: {
+    getNetworkLastKnownLocation: () => Promise<{
+      latitude: number;
+      longitude: number;
+      accuracy?: number;
+      timestamp?: number;
+      provider?: string;
+      mock?: boolean;
+    } | null>;
+  };
+};
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -193,6 +206,57 @@ function getNotificationNavigationPath(data?: Record<string, unknown> | null): s
   }
 
   return null;
+}
+
+function parseNotificationDataValue(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string') return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+function collectNotificationData(source: unknown): Record<string, unknown> {
+  const parsed = parseNotificationDataValue(source);
+  if (!parsed) return {};
+
+  const nestedKeys = ['data', 'body', 'payload', 'params', 'extra'];
+  const nested = nestedKeys.reduce<Record<string, unknown>>((acc, key) => {
+    const nestedData = parseNotificationDataValue(parsed[key]);
+    return nestedData ? { ...acc, ...nestedData } : acc;
+  }, {});
+
+  return { ...nested, ...parsed };
+}
+
+function getNotificationResponseData(response: Notifications.NotificationResponse): Record<string, unknown> {
+  const request = response.notification.request as any;
+  const contentData = response.notification.request.content.data;
+  const remoteData =
+    request?.trigger?.remoteMessage?.data ||
+    request?.trigger?.payload ||
+    request?.trigger?.data ||
+    request?.content?.data;
+
+  return {
+    ...collectNotificationData(remoteData),
+    ...collectNotificationData(contentData),
+  };
+}
+
+function getPathnameFromPath(path: string): string {
+  try {
+    return new URL(path, BASE_WEB_URL).pathname || '/';
+  } catch (_) {
+    return path.split('?')[0] || '/';
+  }
 }
 
 function getWebViewNameForPath(pathname: string): 'main' | 'map' | 'dashboard' | 'profile' {
@@ -429,18 +493,123 @@ async function registerAndSendPushToken(reason: string): Promise<void> {
 }
 
 // ---------- 위치 권한 ----------
+function toLocationObject(location: {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp?: number;
+  provider?: string;
+  mock?: boolean;
+}): Location.LocationObject {
+  return {
+    coords: {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      altitude: null,
+      accuracy: location.accuracy ?? null,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+    },
+    timestamp: location.timestamp || Date.now(),
+    mocked: location.mock,
+  };
+}
+
+async function getAndroidNetworkLocation(): Promise<Location.LocationObject | null> {
+  if (Platform.OS !== 'android' || !WithartLocation) return null;
+
+  try {
+    const location = await WithartLocation.getNetworkLastKnownLocation();
+    if (!location || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)) {
+      return null;
+    }
+
+    const ageMs = location.timestamp ? Date.now() - location.timestamp : Number.POSITIVE_INFINITY;
+    if (location.provider !== 'network' && !location.mock && ageMs > 10 * 60 * 1000) {
+      return null;
+    }
+
+    return toLocationObject(location);
+  } catch (error) {
+    console.warn('Android network location error:', error);
+    return null;
+  }
+}
+
+async function getCurrentLocationOnce(): Promise<Location.LocationObject | null> {
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Lowest,
+      mayShowUserSettingsDialog: true,
+    });
+  } catch (e) {
+    console.warn('Current location error:', e);
+  }
+
+  return await new Promise<Location.LocationObject | null>((resolve) => {
+    let settled = false;
+    let subscription: Location.LocationSubscription | null = null;
+    const finish = (location: Location.LocationObject | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      subscription?.remove();
+      resolve(location);
+    };
+    const timer = setTimeout(() => finish(null), 3500);
+
+    Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Lowest,
+        timeInterval: 1000,
+        distanceInterval: 0,
+        mayShowUserSettingsDialog: true,
+      },
+      (location) => finish(location),
+    )
+      .then((nextSubscription) => {
+        if (settled) {
+          nextSubscription.remove();
+        } else {
+          subscription = nextSubscription;
+        }
+      })
+      .catch((error) => {
+        console.warn('Location watch once error:', error);
+        finish(null);
+      });
+  });
+}
+
 async function requestLocationPermission(): Promise<Location.LocationObject | null> {
   try {
+    if (Platform.OS === 'android') {
+      const hasFineLocation = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      );
+      const hasCoarseLocation = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      );
+
+      if (hasFineLocation || hasCoarseLocation) {
+        const androidNetworkLocation = await getAndroidNetworkLocation();
+        if (androidNetworkLocation) return androidNetworkLocation;
+      }
+    }
+
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
       console.warn('Location permission denied');
       return null;
     }
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-      mayShowUserSettingsDialog: true,
+
+    const currentLocation = await getCurrentLocationOnce();
+    if (currentLocation) return currentLocation;
+
+    return await Location.getLastKnownPositionAsync({
+      maxAge: 10 * 60 * 1000,
     });
-    return location;
   } catch (e) {
     console.warn('Location error:', e);
     return null;
@@ -870,6 +1039,7 @@ export default function App({ onLoggedInChange }: AppProps) {
   const [activeTabName, setActiveTabName] = useState<'홈' | '예약' | '대시보드' | '내 정보'>('홈');
   const [pendingTabName, setPendingTabName] = useState<'홈' | '예약' | '대시보드' | '내 정보' | null>(null);
   const [mainPathname, setMainPathname] = useState<string>('');
+  const [mapPathname, setMapPathname] = useState<string>('/map');
   const [dashboardPathname, setDashboardPathname] = useState<string>('/dashboard');
   const [nativeShellBackgroundOverride, setNativeShellBackgroundOverride] = useState<string | null>(null);
   const [forceTopLoadingOverlay, setForceTopLoadingOverlay] = useState(false);
@@ -883,6 +1053,8 @@ export default function App({ onLoggedInChange }: AppProps) {
   const contentBottomNavVisibleRef = useRef(true);
   const contentBottomNavShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingNotificationPathRef = useRef<string | null>(null);
+  const notificationNavigationHoldRef = useRef<{ path: string; until: number } | null>(null);
+  const handledNotificationResponseKeysRef = useRef<Set<string>>(new Set());
   const authHydrationPending = useAuthFlowStore((s) => s.authHydrationPending);
   const setAuthHydrationPending = useAuthFlowStore((s) => s.setAuthHydrationPending);
   const setNavTransitionPending = useAuthFlowStore((s) => s.setNavTransitionPending);
@@ -1065,6 +1237,9 @@ export default function App({ onLoggedInChange }: AppProps) {
     setMainWebViewNonce((value) => value + 1);
     setShouldPrewarmTabs(false);
     setActiveTabName('홈');
+    setMainPathname('');
+    setMapPathname('/map');
+    setDashboardPathname('/dashboard');
   }, []);
 
   const resetToLoginAfterInvalidProfile = useCallback(async () => {
@@ -1087,6 +1262,8 @@ export default function App({ onLoggedInChange }: AppProps) {
     setMainWebViewNonce((value) => value + 1);
     setShouldPrewarmTabs(false);
     setMainPathname('');
+    setMapPathname('/map');
+    setDashboardPathname('/dashboard');
   }, [setAuthHydrationPending, setIsLoggedIn]);
 
   const validateProfileInBackground = useCallback(
@@ -1619,6 +1796,7 @@ export default function App({ onLoggedInChange }: AppProps) {
       setActiveTabName(nextTab);
       webviewControllerRegistry.get('profile')?.navigateToPath(pathname);
     } else if (nextTab === '예약') {
+      setMapPathname(pathname);
       setPendingTabName(nextTab);
       setActiveTabName(nextTab);
       webviewControllerRegistry.get('map')?.navigateToPath(pathname);
@@ -1636,6 +1814,7 @@ export default function App({ onLoggedInChange }: AppProps) {
   const navigateToNotificationPath = useCallback((path: string) => {
     if (!path) return;
     pendingNotificationPathRef.current = path;
+    notificationNavigationHoldRef.current = { path, until: Date.now() + 9000 };
 
     if (!isLoggedIn) return;
 
@@ -1645,36 +1824,59 @@ export default function App({ onLoggedInChange }: AppProps) {
       const ctrl = webviewControllerRegistry.get(targetWebViewName);
       if (!ctrl) return;
       ctrl.navigateToPath(path);
-      pendingNotificationPathRef.current = null;
     };
 
     [mainContentReady ? 80 : 450, 900, 1800, 3000].forEach((delay) => {
       setTimeout(run, delay);
     });
+
+    setTimeout(() => {
+      if (pendingNotificationPathRef.current === path) {
+        pendingNotificationPathRef.current = null;
+      }
+      if (notificationNavigationHoldRef.current?.path === path) {
+        notificationNavigationHoldRef.current = null;
+      }
+    }, 9000);
   }, [handleNavigateTabMessage, isLoggedIn, mainContentReady]);
 
-  useEffect(() => {
-    const handleNotificationData = (data?: Record<string, unknown> | null) => {
+  const handleNotificationResponse = useCallback(
+    (response: Notifications.NotificationResponse | null | undefined, source: string) => {
+      if (!response) return;
+      const data = getNotificationResponseData(response);
       const path = getNotificationNavigationPath(data);
-      if (path) navigateToNotificationPath(path);
-    };
+      const notificationId = response.notification.request.identifier || '';
+      const key = `${notificationId}:${path || JSON.stringify(data)}`;
 
+      if (handledNotificationResponseKeysRef.current.has(key)) return;
+      handledNotificationResponseKeysRef.current.add(key);
+
+      if (path) {
+        navigateToNotificationPath(path);
+        Notifications.clearLastNotificationResponseAsync().catch(() => {});
+      }
+    },
+    [navigateToNotificationPath],
+  );
+
+  useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      handleNotificationData(response.notification.request.content.data as Record<string, unknown> | null);
+      handleNotificationResponse(response, 'listener');
     });
 
-    Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) {
-          handleNotificationData(response.notification.request.content.data as Record<string, unknown> | null);
-        }
-      })
-      .catch((error) => console.warn('[App] Failed to read last notification response:', error));
+    const timers = [0, 250, 800, 1600, 3200, 6000].map((delay) =>
+      setTimeout(() => {
+        Notifications.getLastNotificationResponseAsync()
+          .then((response) => handleNotificationResponse(response, `last:${delay}`))
+          .catch((error) => console.warn('[App] Failed to read last notification response:', error));
+      }, delay),
+    );
 
     return () => {
+      timers.forEach(clearTimeout);
       subscription.remove();
     };
-  }, [navigateToNotificationPath]);
+  }, [handleNotificationResponse]);
 
   useEffect(() => {
     if (!isLoggedIn || !mainContentReady || !pendingNotificationPathRef.current) return;
@@ -1717,10 +1919,31 @@ export default function App({ onLoggedInChange }: AppProps) {
                         key={`main-${mainWebViewNonce}`}
                         url={`${BASE_WEB_URL}/`}
                         name="main"
-                        targetPath="/"
+                        targetPath={mainPathname || '/'}
                         authPayload={webviewAuthPayload}
                         onPathChange={(pathname) => {
-                          setMainPathname((prev) => (prev === pathname ? prev : pathname));
+                          const heldNotificationPath = notificationNavigationHoldRef.current;
+                          if (
+                            heldNotificationPath &&
+                            Date.now() < heldNotificationPath.until &&
+                            pathname === '/' &&
+                            getPathnameFromPath(heldNotificationPath.path) !== '/'
+                          ) {
+                            return;
+                          }
+
+                          const matchedHeldNotification =
+                            heldNotificationPath &&
+                            pathname === getPathnameFromPath(heldNotificationPath.path);
+
+                          if (matchedHeldNotification) {
+                            pendingNotificationPathRef.current = null;
+                          }
+
+                          const nextMainPathname = matchedHeldNotification
+                            ? heldNotificationPath.path
+                            : pathname;
+                          setMainPathname((prev) => (prev === nextMainPathname ? prev : nextMainPathname));
 
                           const nextTab =
                             pathname.startsWith('/dashboard')
@@ -1794,8 +2017,11 @@ export default function App({ onLoggedInChange }: AppProps) {
                       <WebViewScreen
                         url={`${BASE_WEB_URL}/map`}
                         name="map"
-                        targetPath="/map"
+                        targetPath={mapPathname || '/map'}
                         authPayload={webviewAuthPayload}
+                        onPathChange={(pathname) => {
+                          setMapPathname((prev) => (prev === pathname ? prev : pathname));
+                        }}
                         onCustomMessage={(type, data) => {
                           if (handleSharedWebViewMessage(type, data)) {
                             return;
@@ -1803,7 +2029,9 @@ export default function App({ onLoggedInChange }: AppProps) {
 
                           if (type === 'REQUEST_NATIVE_LOCATION') {
                             requestLocationPermission().then((location) => {
-                              if (location) broadcastNativeLocation(location);
+                              if (location) {
+                                broadcastNativeLocation(location);
+                              }
                             });
                             return;
                           }
@@ -1830,7 +2058,7 @@ export default function App({ onLoggedInChange }: AppProps) {
                       <WebViewScreen
                         url={`${BASE_WEB_URL}/dashboard`}
                         name="dashboard"
-                        targetPath="/dashboard"
+                        targetPath={dashboardPathname || '/dashboard'}
                         authPayload={webviewAuthPayload}
                         onPathChange={(pathname) => {
                           setDashboardPathname((prev) => (prev === pathname ? prev : pathname));
@@ -1887,14 +2115,39 @@ export default function App({ onLoggedInChange }: AppProps) {
                         accessibilityLabel="전시 상세 뒤로가기"
                         style={styles.exhibitionBackTouchCatcher}
                         onPress={() => {
-                          setPendingTabName('홈');
-                          setActiveTabName('홈');
-                          setMainPathname('/');
                           routeBottomNavVisibleRef.current = true;
                           setRouteBottomNavVisible(true);
                           contentBottomNavVisibleRef.current = true;
                           setContentBottomNavVisible(true);
-                          webviewControllerRegistry.get('main')?.navigateToPath('/');
+                          webviewControllerRegistry.get('main')?.injectJavaScript(`(function(){
+                            try {
+                              var fallbackPath = '/dashboard';
+                              try {
+                                var params = new URLSearchParams(window.location.search || '');
+                                var returnTo = params.get('returnTo');
+                                if (returnTo && returnTo.charAt(0) === '/') fallbackPath = returnTo;
+                              } catch(e) {}
+                              if (window.history && window.history.length > 1) {
+                                window.history.back();
+                                setTimeout(function(){
+                                  try {
+                                    if ((window.location.pathname || '') !== '/exhibition-detail') return;
+                                    if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+                                      window.__WITHART_HANDLE_NATIVE_NAV(fallbackPath);
+                                    } else {
+                                      window.location.href = fallbackPath;
+                                    }
+                                  } catch(e) {}
+                                }, 350);
+                                return;
+                              }
+                              if (typeof window.__WITHART_HANDLE_NATIVE_NAV === 'function') {
+                                window.__WITHART_HANDLE_NATIVE_NAV(fallbackPath);
+                              } else {
+                                window.location.href = fallbackPath;
+                              }
+                            } catch(e) {}
+                          })();true;`);
                         }}
                       />
                     )}

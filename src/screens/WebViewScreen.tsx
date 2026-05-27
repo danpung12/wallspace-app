@@ -68,6 +68,121 @@ const WEBVIEW_DEBUG_BRIDGE_SCRIPT = `(function() {
   };
 })();true;`;
 
+const GEOLOCATION_BRIDGE_SCRIPT = `(function() {
+  if (window.__WITHART_GEOLOCATION_BRIDGE_INSTALLED__) return true;
+  window.__WITHART_GEOLOCATION_BRIDGE_INSTALLED__ = true;
+
+  var pending = {};
+  var watchId = 1;
+
+  function postRequest() {
+    try {
+      if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NATIVE_LOCATION' }));
+      } else if (
+        window.webkit &&
+        window.webkit.messageHandlers &&
+        window.webkit.messageHandlers.ReactNativeWebView &&
+        typeof window.webkit.messageHandlers.ReactNativeWebView.postMessage === 'function'
+      ) {
+        window.webkit.messageHandlers.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NATIVE_LOCATION' }));
+      }
+    } catch (e) {}
+  }
+
+  function toPosition(payload) {
+    return {
+      coords: {
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        accuracy: payload.accuracy == null ? 0 : payload.accuracy,
+        altitude: null,
+        altitudeAccuracy: null,
+        heading: null,
+        speed: null
+      },
+      timestamp: payload.timestamp || Date.now()
+    };
+  }
+
+  function isValid(payload) {
+    return !!payload && Number.isFinite(payload.latitude) && Number.isFinite(payload.longitude);
+  }
+
+  function complete(payload) {
+    if (!isValid(payload)) return;
+    var position = toPosition(payload);
+    Object.keys(pending).forEach(function(id) {
+      var item = pending[id];
+      if (!item) return;
+      try { item.success(position); } catch (e) {}
+      if (!item.watch) {
+        try { clearTimeout(item.timer); } catch (e) {}
+        delete pending[id];
+      }
+    });
+  }
+
+  window.addEventListener('WITHART_NATIVE_LOCATION', function(event) {
+    try { complete(event.detail); } catch (e) {}
+  });
+
+  var bridgeGeolocation = {
+    getCurrentPosition: function(success, error, options) {
+      var cached = window.__WITHART_NATIVE_LOCATION;
+      if (isValid(cached)) {
+        try { success(toPosition(cached)); } catch (e) {}
+        return;
+      }
+
+      var id = String(watchId++);
+      var timeout = options && typeof options.timeout === 'number' ? Math.max(options.timeout, 1000) : 7000;
+      pending[id] = {
+        success: typeof success === 'function' ? success : function() {},
+        error: typeof error === 'function' ? error : function() {},
+        watch: false,
+        timer: setTimeout(function() {
+          var item = pending[id];
+          if (!item) return;
+          delete pending[id];
+          try { item.error({ code: 3, message: 'Native location timeout' }); } catch (e) {}
+        }, timeout)
+      };
+      postRequest();
+    },
+    watchPosition: function(success, error, options) {
+      var id = String(watchId++);
+      pending[id] = {
+        success: typeof success === 'function' ? success : function() {},
+        error: typeof error === 'function' ? error : function() {},
+        watch: true,
+        timer: null
+      };
+      var cached = window.__WITHART_NATIVE_LOCATION;
+      if (isValid(cached)) {
+        try { pending[id].success(toPosition(cached)); } catch (e) {}
+      }
+      postRequest();
+      return Number(id);
+    },
+    clearWatch: function(id) {
+      delete pending[String(id)];
+    }
+  };
+
+  try {
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      enumerable: true,
+      value: bridgeGeolocation
+    });
+  } catch (e) {
+    try { navigator.geolocation = bridgeGeolocation; } catch (_) {}
+  }
+
+  return true;
+})();true;`;
+
 const DASHBOARD_SAFE_TOP_SCRIPT = `(function(){
   function applyDashboardSafeTop() {
     try {
@@ -1010,9 +1125,9 @@ export default function WebViewScreen({ url, name, targetPath = '/', authPayload
         onLoadEnd={handleLoadEnd}
         onNavigationStateChange={handleNavChange}
         onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
-        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
+        injectedJavaScriptBeforeContentLoaded={`${buildAuthSessionScript(authPayload, name, targetPath)}\n;${RN_WEBVIEW_PRE_INJECT}\n;${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
-        injectedJavaScript={`${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
+        injectedJavaScript={`${WEBVIEW_DEBUG_BRIDGE_SCRIPT}\n;${GEOLOCATION_BRIDGE_SCRIPT}\n;${THEME_COLOR_SCRIPT}\n;${CHAT_SAFE_TOP_SCRIPT}\n;${ADD_STORE_WHITE_SHELL_SCRIPT}`}
         onError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;
           console.error('[WebView Error]', nativeEvent.description);
