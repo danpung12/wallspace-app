@@ -525,6 +525,9 @@ function getPathnameForTab(tab?: string): string | null {
 
 function getOwnerNameForPath(pathname?: string, currentOwner?: string): string {
   const path = pathname || '/';
+  if (path.startsWith('/chat')) {
+    return currentOwner || 'main';
+  }
   if (
     currentOwner === 'dashboard' &&
     (
